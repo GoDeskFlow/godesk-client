@@ -87,6 +87,53 @@ class RealBridge implements Bridge {
   @override
   Future<void> clearCompleted() => throw UnimplementedError();
 
+  // — Phase 2.5 surface (added alongside MockBridge for symmetry) —
+
+  @override
+  bool get numericOtp => throw UnimplementedError();
+
+  @override
+  set numericOtp(bool v) => throw UnimplementedError();
+
+  @override
+  Future<void> setPeerAlias(String peerId, String? alias) => throw UnimplementedError();
+
+  @override
+  Future<void> setPeerOption(String peerId, String key, String value) => throw UnimplementedError();
+
+  @override
+  Future<String?> getPeerOption(String peerId, String key) => throw UnimplementedError();
+
+  @override
+  Future<List<String>> audioInputDevices() => throw UnimplementedError();
+
+  @override
+  Future<List<String>> audioOutputDevices() => throw UnimplementedError();
+
+  @override
+  Stream<SessionState> sessionState() => throw UnimplementedError();
+
+  @override
+  Future<void> requestRestart() => throw UnimplementedError();
+
+  @override
+  Future<void> toggleVoiceCall() => throw UnimplementedError();
+
+  @override
+  Future<void> toggleRecording() => throw UnimplementedError();
+
+  @override
+  Future<void> togglePrivacyMode(String key) => throw UnimplementedError();
+
+  @override
+  Stream<ChatMessage> chatEvents() => throw UnimplementedError();
+
+  @override
+  Future<void> sendChat(String text) => throw UnimplementedError();
+
+  @override
+  String inviteLink({required String id, required String otp}) => throw UnimplementedError();
+
   @override
   void dispose() {}
 }

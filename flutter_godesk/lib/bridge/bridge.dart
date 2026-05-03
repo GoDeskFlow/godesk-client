@@ -45,19 +45,76 @@ class ConnectEvent {
   final String? message;
 }
 
+/// Who sent a chat message in an active session.
+enum ChatSender { self, peer }
+
+class ChatMessage {
+  const ChatMessage({required this.from, required this.text, required this.time});
+  final ChatSender from;
+  final String text;
+  final DateTime time;
+}
+
+/// Reactive state of the *active* remote session. `peerId == null` ⇒ no session.
+class SessionState {
+  const SessionState({
+    this.peerId,
+    this.voiceActive = false,
+    this.recording = false,
+    this.privacyModes = const <String>{},
+  });
+
+  final String? peerId;
+  final bool voiceActive;
+  final bool recording;
+  final Set<String> privacyModes;
+
+  bool get inSession => peerId != null;
+
+  SessionState copyWith({
+    String? peerId,
+    bool? clearPeer,
+    bool? voiceActive,
+    bool? recording,
+    Set<String>? privacyModes,
+  }) {
+    return SessionState(
+      peerId: (clearPeer ?? false) ? null : peerId ?? this.peerId,
+      voiceActive: voiceActive ?? this.voiceActive,
+      recording: recording ?? this.recording,
+      privacyModes: privacyModes ?? this.privacyModes,
+    );
+  }
+}
+
 abstract class Bridge {
   // — Identity —
   Future<Identity> identity();
   Future<String> oneTimePassword();
   Future<String> regeneratePassword();
 
+  /// Whether OTP generation should yield digits-only (easier to dictate).
+  /// Defaults to false. RuDesktop 2.9.492 parity.
+  bool get numericOtp;
+  set numericOtp(bool v);
+
   // — Address book —
   Stream<List<Peer>> peers();
   Future<void> upsertPeer(Peer p);
   Future<void> forgetPeer(String id);
+  Future<void> setPeerAlias(String peerId, String? alias);
+
+  /// Per-peer connection presets (image quality, mode, audio).
+  /// Reads/writes are persisted opaquely; key/value strings only.
+  Future<void> setPeerOption(String peerId, String key, String value);
+  Future<String?> getPeerOption(String peerId, String key);
 
   // — Diagnostics —
   Stream<Diagnostics> diagnostics();
+
+  // — Audio device enumeration (RuDesktop 2.9.385 parity) —
+  Future<List<String>> audioInputDevices();
+  Future<List<String>> audioOutputDevices();
 
   // — Connect / disconnect —
   Stream<ConnectEvent> connectEvents();
@@ -65,11 +122,27 @@ abstract class Bridge {
   Future<void> cancelConnect();
   Future<void> disconnect();
 
+  // — Active session state + commands —
+  Stream<SessionState> sessionState();
+  Future<void> requestRestart();
+  Future<void> toggleVoiceCall();
+  Future<void> toggleRecording();
+  Future<void> togglePrivacyMode(String key);
+
+  // — In-session text chat —
+  Stream<ChatMessage> chatEvents();
+  Future<void> sendChat(String text);
+
   // — Transfers —
   Stream<List<TransferItem>> transfers();
   Future<void> addTransfer({required String filePath, required TransferDir dir});
   Future<void> cancelTransfer(int id);
   Future<void> clearCompleted();
+
+  // — Invite links (RuDesktop 2.9.448 parity) —
+  /// Build a shareable URL like `https://godeskflow.com/c/<base64(id|otp)>`.
+  /// Receiver clicking should open GoDesk and prefill the connect form.
+  String inviteLink({required String id, required String otp});
 
   void dispose();
 }

@@ -2,6 +2,7 @@
 // Port of godesk-skeuo-files.jsx.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../bridge/bridge.dart';
 import '../bridge/provider.dart';
@@ -27,7 +28,37 @@ class FilesScreen extends StatefulWidget {
 class _FilesScreenState extends State<FilesScreen> {
   static const int _peakSpeed = 25000000;
 
+  /// Currently-selected transfer id — driven by tap on a row, used by the
+  /// `Delete` hotkey to know which transfer to cancel. RuDesktop 2.7.982 parity.
+  int? _selectedId;
+
+  final FocusNode _focus = FocusNode();
+
   Bridge get _bridge => BridgeProvider.of(context);
+
+  @override
+  void dispose() {
+    _focus.dispose();
+    super.dispose();
+  }
+
+  /// Folder-first sort within each segment (active → queued → done), then by id
+  /// for stable order. RuDesktop 2.8.1532 parity.
+  List<TransferItem> _sortQueue(List<TransferItem> q) {
+    int segment(TransferItem i) {
+      if (i.done) return 2;
+      if (i.queued) return 1;
+      return 0;
+    }
+    final out = List<TransferItem>.from(q);
+    out.sort((a, b) {
+      final s = segment(a) - segment(b);
+      if (s != 0) return s;
+      if (a.isFolder != b.isFolder) return a.isFolder ? -1 : 1;
+      return a.id - b.id;
+    });
+    return out;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -36,35 +67,63 @@ class _FilesScreenState extends State<FilesScreen> {
       stream: _bridge.transfers(),
       initialData: const <TransferItem>[],
       builder: (context, snap) {
-        final queue = snap.data ?? const <TransferItem>[];
+        final queue = _sortQueue(snap.data ?? const <TransferItem>[]);
         final active = queue.where((q) => !q.done && !q.queued).toList();
         final sendSpeed = active.where((q) => q.dir == TransferDir.send).fold<int>(0, (s, q) => s + q.speed);
         final recvSpeed = active.where((q) => q.dir == TransferDir.receive).fold<int>(0, (s, q) => s + q.speed);
         final totalSpeed = sendSpeed + recvSpeed;
-        return DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: t.dark
-                  ? const <Color>[Color(0xFF1C1D22), Color(0xFF16171B)]
-                  : const <Color>[Color(0xFFE8E4DC), Color(0xFFD8D3C8)],
-            ),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                SizedBox(
-                  width: 280,
-                  child: SingleChildScrollView(
-                    child: _leftColumn(t, sendSpeed, recvSpeed, totalSpeed),
+        return Shortcuts(
+          shortcuts: const <ShortcutActivator, Intent>{
+            SingleActivator(LogicalKeyboardKey.delete): _CancelTransferIntent(),
+            SingleActivator(LogicalKeyboardKey.backspace, meta: true): _CancelTransferIntent(),
+          },
+          child: Actions(
+            actions: <Type, Action<Intent>>{
+              _CancelTransferIntent: CallbackAction<_CancelTransferIntent>(
+                onInvoke: (_) {
+                  final id = _selectedId;
+                  if (id == null) return null;
+                  final item = queue.cast<TransferItem?>().firstWhere(
+                        (q) => q?.id == id,
+                        orElse: () => null,
+                      );
+                  if (item == null || item.done) return null;
+                  _bridge.cancelTransfer(id);
+                  setState(() => _selectedId = null);
+                  return null;
+                },
+              ),
+            },
+            child: Focus(
+              focusNode: _focus,
+              autofocus: true,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: t.dark
+                        ? const <Color>[Color(0xFF1C1D22), Color(0xFF16171B)]
+                        : const <Color>[Color(0xFFE8E4DC), Color(0xFFD8D3C8)],
                   ),
                 ),
-                const SizedBox(width: 14),
-                Expanded(child: _rightColumn(t, queue)),
-              ],
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      SizedBox(
+                        width: 280,
+                        child: SingleChildScrollView(
+                          child: _leftColumn(t, sendSpeed, recvSpeed, totalSpeed),
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(child: _rightColumn(t, queue)),
+                    ],
+                  ),
+                ),
+              ),
             ),
           ),
         );
@@ -240,6 +299,12 @@ class _FilesScreenState extends State<FilesScreen> {
                             itemBuilder: (context, i) => _TransferRow(
                               item: queue[i],
                               isLast: i == queue.length - 1,
+                              selected: _selectedId == queue[i].id,
+                              onTap: () {
+                                setState(() => _selectedId = queue[i].id);
+                                _focus.requestFocus();
+                              },
+                              onCancel: () => _bridge.cancelTransfer(queue[i].id),
                             ),
                           ),
                   ),
@@ -361,94 +426,115 @@ class _ConnFlag extends StatelessWidget {
 }
 
 class _TransferRow extends StatelessWidget {
-  const _TransferRow({required this.item, required this.isLast});
+  const _TransferRow({
+    required this.item,
+    required this.isLast,
+    this.selected = false,
+    this.onTap,
+    this.onCancel,
+  });
   final TransferItem item;
   final bool isLast;
+  final bool selected;
+  final VoidCallback? onTap;
+  final VoidCallback? onCancel;
 
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).extension<GoDeskTheme>()!;
     final pct = item.progress.clamp(0.0, 1.0);
     final isReceive = item.dir == TransferDir.receive;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        border: isLast ? null : Border(bottom: BorderSide(color: t.border, width: 0.5)),
-      ),
-      child: Row(
-        children: <Widget>[
-          // direction tile
-          Container(
-            width: 28,
-            height: 28,
-            decoration: BoxDecoration(
-              gradient: item.done
-                  ? const LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: <Color>[Color(0xFF34D058), Color(0xFF22A843)],
-                    )
-                  : item.queued
-                      ? LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: <Color>[t.panelHi, t.panel],
-                        )
-                      : LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: <Color>[t.accent, t.accentDark],
-                        ),
-              borderRadius: BorderRadius.circular(5),
-              border: Border.all(
-                color: item.done
-                    ? const Color(0xFF22A843)
-                    : item.queued
-                        ? t.border
-                        : t.accentDark,
-              ),
-            ),
-            child: Icon(
-              item.done
-                  ? Icons.check
-                  : isReceive
-                      ? Icons.arrow_downward
-                      : Icons.arrow_upward,
-              size: 14,
-              color: item.queued ? t.subtle : Colors.white,
-            ),
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: selected ? t.accent.withValues(alpha: t.dark ? 0.15 : 0.08) : null,
+            border: isLast ? null : Border(bottom: BorderSide(color: t.border, width: 0.5)),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Row(
+          child: Row(
+            children: <Widget>[
+              // direction tile
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  gradient: item.done
+                      ? const LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: <Color>[Color(0xFF34D058), Color(0xFF22A843)],
+                        )
+                      : item.queued
+                          ? LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: <Color>[t.panelHi, t.panel],
+                            )
+                          : LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: <Color>[t.accent, t.accentDark],
+                            ),
+                  borderRadius: BorderRadius.circular(5),
+                  border: Border.all(
+                    color: item.done
+                        ? const Color(0xFF22A843)
+                        : item.queued
+                            ? t.border
+                            : t.accentDark,
+                  ),
+                ),
+                child: Icon(
+                  item.done
+                      ? Icons.check
+                      : item.isFolder
+                          ? Icons.folder_outlined
+                          : isReceive
+                              ? Icons.arrow_downward
+                              : Icons.arrow_upward,
+                  size: 14,
+                  color: item.queued ? t.subtle : Colors.white,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    Expanded(
-                      child: Text(
-                        item.name,
-                        overflow: TextOverflow.ellipsis,
-                        style: GDtype.mono(size: 12, weight: FontWeight.w600, color: t.heading),
-                      ),
+                    Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: Text(
+                            item.name,
+                            overflow: TextOverflow.ellipsis,
+                            style: GDtype.mono(size: 12, weight: FontWeight.w600, color: t.heading),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        _ExtChip(item: item, theme: t),
+                        const SizedBox(width: 8),
+                        Text(formatBytes(item.size),
+                            style: GDtype.mono(size: 10, color: t.subtle)),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    Text(formatBytes(item.size),
-                        style: GDtype.mono(size: 10, color: t.subtle)),
+                    const SizedBox(height: 4),
+                    _ProgressBar(pct: pct, done: item.done, theme: t),
+                    const SizedBox(height: 4),
+                    _statusLine(t, item),
                   ],
                 ),
-                const SizedBox(height: 4),
-                _ProgressBar(pct: pct, done: item.done, theme: t),
-                const SizedBox(height: 4),
-                _statusLine(t, item),
+              ),
+              if (!item.done) ...<Widget>[
+                const SizedBox(width: 12),
+                _CancelChip(onTap: onCancel),
               ],
-            ),
+            ],
           ),
-          if (!item.done) ...<Widget>[
-            const SizedBox(width: 12),
-            _CancelChip(),
-          ],
-        ],
+        ),
       ),
     );
   }
@@ -543,24 +629,72 @@ class _ProgressBar extends StatelessWidget {
 }
 
 class _CancelChip extends StatelessWidget {
+  const _CancelChip({this.onTap});
+  final VoidCallback? onTap;
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).extension<GoDeskTheme>()!;
-    return Container(
-      width: 22,
-      height: 22,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: <Color>[t.panelHi, t.panel],
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Tooltip(
+          message: 'Cancel transfer (Del)',
+          child: Container(
+            width: 22,
+            height: 22,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: <Color>[t.panelHi, t.panel],
+              ),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: t.border),
+            ),
+            child: Icon(Icons.close, size: 12, color: t.body),
+          ),
         ),
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: t.border),
       ),
-      child: Icon(Icons.close, size: 12, color: t.body),
     );
   }
+}
+
+/// Small monospace chip showing the file extension (or "DIR" for folders).
+/// Renders nothing for extensionless files.
+class _ExtChip extends StatelessWidget {
+  const _ExtChip({required this.item, required this.theme});
+  final TransferItem item;
+  final GoDeskTheme theme;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = item.isFolder ? 'DIR' : item.extension.toUpperCase();
+    if (label.isEmpty) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+      decoration: BoxDecoration(
+        color: theme.bg,
+        borderRadius: BorderRadius.circular(3),
+        border: Border.all(color: theme.border),
+      ),
+      child: Text(
+        label,
+        style: GDtype.mono(
+          size: 9,
+          weight: FontWeight.w700,
+          color: theme.subtle,
+          letterSpacing: 0.4,
+        ),
+      ),
+    );
+  }
+}
+
+/// Hotkey intent — `Delete` cancels the currently-selected active transfer.
+class _CancelTransferIntent extends Intent {
+  const _CancelTransferIntent();
 }
 
 class _TransferQueueEmpty extends StatelessWidget {

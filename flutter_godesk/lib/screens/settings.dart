@@ -3,6 +3,8 @@
 
 import 'package:flutter/material.dart';
 
+import '../bridge/bridge.dart';
+import '../bridge/provider.dart';
 import '../config/infra.dart';
 import '../kit/knob.dart';
 import '../kit/lcd_panel.dart';
@@ -34,6 +36,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
   double _vol = 70;
   double _mic = 45;
   int _relay = 0;
+
+  // Audio device pickers — populated lazily from bridge.
+  List<String> _audioInputs = const <String>[];
+  List<String> _audioOutputs = const <String>[];
+  String? _audioInput;
+  String? _audioOutput;
+  bool _audioDevicesLoaded = false;
+
+  // Numeric-only OTP — kept in sync with bridge.numericOtp.
+  bool _numericOtpLoaded = false;
+  bool _numericOtp = false;
+
+  Bridge get _bridge => BridgeProvider.of(context);
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_audioDevicesLoaded) {
+      _audioDevicesLoaded = true;
+      _bridge.audioInputDevices().then((v) {
+        if (!mounted) return;
+        setState(() {
+          _audioInputs = v;
+          _audioInput = v.isNotEmpty ? v.first : null;
+        });
+      });
+      _bridge.audioOutputDevices().then((v) {
+        if (!mounted) return;
+        setState(() {
+          _audioOutputs = v;
+          _audioOutput = v.isNotEmpty ? v.first : null;
+        });
+      });
+    }
+    if (!_numericOtpLoaded) {
+      _numericOtpLoaded = true;
+      setState(() => _numericOtp = _bridge.numericOtp);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -171,7 +212,67 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   Expanded(child: _knobCell(t, 'Mic gain', _mic, (v) => setState(() => _mic = v))),
                 ],
               ),
+              const SizedBox(height: 18),
+              _audioDevicePicker(
+                t,
+                label: 'Output device',
+                value: _audioOutput,
+                items: _audioOutputs,
+                onChanged: (v) => setState(() => _audioOutput = v),
+              ),
+              const SizedBox(height: 12),
+              _audioDevicePicker(
+                t,
+                label: 'Input device (mic)',
+                value: _audioInput,
+                items: _audioInputs,
+                onChanged: (v) => setState(() => _audioInput = v),
+              ),
             ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _audioDevicePicker(
+    GoDeskTheme t, {
+    required String label,
+    required String? value,
+    required List<String> items,
+    required ValueChanged<String?> onChanged,
+  }) {
+    final isEmpty = items.isEmpty;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(label.toUpperCase(),
+            style: GDtype.wordmark(size: 10, color: t.subtle, trackingEm: 0.06)),
+        const SizedBox(height: 6),
+        LCDPanel(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          child: SizedBox(
+            height: 28,
+            child: isEmpty
+                ? Text('— no devices reported —', style: lcdReadout(theme: t, size: 11).copyWith(color: t.lcdDim))
+                : DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: value,
+                      isExpanded: true,
+                      isDense: true,
+                      dropdownColor: t.panel,
+                      style: lcdReadout(theme: t, size: 11),
+                      iconEnabledColor: t.lcdInk,
+                      items: <DropdownMenuItem<String>>[
+                        for (final d in items)
+                          DropdownMenuItem<String>(
+                            value: d,
+                            child: Text(d, style: lcdReadout(theme: t, size: 11)),
+                          ),
+                      ],
+                      onChanged: onChanged,
+                    ),
+                  ),
           ),
         ),
       ],
@@ -194,6 +295,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _toggleRow('Share clipboard with remote', _permClip, (v) => setState(() => _permClip = v), t),
               const SizedBox(height: 10),
               _toggleRow('Allow audio capture', _permAudio, (v) => setState(() => _permAudio = v), t),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        MetalPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const SectionLabel('One-time password'),
+              const SizedBox(height: 12),
+              _toggleRow(
+                'Easier-to-dictate password (digits only)',
+                _numericOtp,
+                (v) {
+                  setState(() => _numericOtp = v);
+                  _bridge.numericOtp = v;
+                },
+                t,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _numericOtp
+                    ? 'New OTPs will be 8 digits (xxxx-xxxx). Easy to read aloud over the phone.'
+                    : 'New OTPs use the consonant-vowel-digit format (cv9-cv9-cv).',
+                style: GDtype.ui(size: 10, color: t.subtle).copyWith(height: 1.4),
+              ),
             ],
           ),
         ),

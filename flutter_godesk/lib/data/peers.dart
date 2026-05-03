@@ -14,6 +14,7 @@ class Peer {
     required this.lastSeen,
     required this.status,
     this.fav = false,
+    this.alias,
   });
 
   final String id;
@@ -24,7 +25,26 @@ class Peer {
   final PeerStatus status;
   final bool fav;
 
+  /// User-set override for [name]. RuDesktop 2.9.755 parity.
+  final String? alias;
+
   bool get isOnline => status == PeerStatus.online;
+
+  /// What we render in the address book row — alias when set, else name.
+  String get displayName => (alias != null && alias!.trim().isNotEmpty) ? alias! : name;
+
+  Peer copyWith({String? alias}) {
+    return Peer(
+      id: id,
+      name: name,
+      os: os,
+      tag: tag,
+      lastSeen: lastSeen,
+      status: status,
+      fav: fav,
+      alias: alias,
+    );
+  }
 }
 
 const myId = '742 819 365';

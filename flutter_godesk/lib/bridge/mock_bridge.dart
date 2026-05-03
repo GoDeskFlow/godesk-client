@@ -18,6 +18,7 @@
 //         flutter build windows --release --dart-define=GODESK_DEMO=true
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 
 import '../data/peers.dart';
@@ -30,6 +31,7 @@ const bool _demoMode = bool.fromEnvironment('GODESK_DEMO', defaultValue: false);
 class MockBridge implements Bridge {
   MockBridge() {
     _queue = _demoMode ? initialQueue() : <TransferItem>[];
+    _peerList = _demoMode ? List<Peer>.from(recentPeers) : <Peer>[];
     _peers = StreamController<List<Peer>>.broadcast(
       onListen: () => _peers.add(_peersSnapshot),
     );
@@ -38,6 +40,9 @@ class MockBridge implements Bridge {
     );
     _transfers = StreamController<List<TransferItem>>.broadcast(
       onListen: () => _transfers.add(List<TransferItem>.unmodifiable(_queue)),
+    );
+    _sessionState = StreamController<SessionState>.broadcast(
+      onListen: () => _sessionState.add(_session),
     );
     if (_demoMode) {
       _ticker = Timer.periodic(const Duration(milliseconds: 400), (_) => _tick());
@@ -48,8 +53,18 @@ class MockBridge implements Bridge {
   // For empty mode we just generate a random one per launch — RealBridge
   // will later replace this with the actual RustDesk-managed ID.
   late final String _myId = _demoMode ? myId : _generateLocalId();
-  late String _password = _demoMode ? initialPassword : genPassword();
+  late String _password = _demoMode ? initialPassword : _genCurrentPassword();
   late List<TransferItem> _queue;
+  late List<Peer> _peerList;
+  bool _numericOtp = false;
+
+  // Per-peer key/value option store. RuDesktop calls this "пресеты подключения".
+  final Map<String, Map<String, String>> _peerOptions = <String, Map<String, String>>{};
+
+  // Active session state — null peerId means "no session".
+  SessionState _session = const SessionState();
+
+  String _genCurrentPassword() => _numericOtp ? genNumericPassword() : genPassword();
 
   static String _generateLocalId() {
     final r = Random();
@@ -58,8 +73,7 @@ class MockBridge implements Bridge {
   }
 
   /// Address book contents — empty by default, demo seed when GODESK_DEMO=true.
-  List<Peer> get _peersSnapshot =>
-      _demoMode ? List<Peer>.unmodifiable(recentPeers) : const <Peer>[];
+  List<Peer> get _peersSnapshot => List<Peer>.unmodifiable(_peerList);
 
   /// Diagnostics — when there's no active session in real life, latency and
   /// NAT are unknown. Empty mode reflects that honestly.
@@ -82,6 +96,8 @@ class MockBridge implements Bridge {
   late final StreamController<Diagnostics> _diagnostics;
   final StreamController<ConnectEvent> _connectEvents = StreamController<ConnectEvent>.broadcast();
   late final StreamController<List<TransferItem>> _transfers;
+  late final StreamController<SessionState> _sessionState;
+  final StreamController<ChatMessage> _chatEvents = StreamController<ChatMessage>.broadcast();
 
   void _tick() {
     var changed = false;
@@ -107,23 +123,80 @@ class MockBridge implements Bridge {
   Future<String> oneTimePassword() async => _password;
 
   @override
-  Future<String> regeneratePassword() async => _password = genPassword();
+  Future<String> regeneratePassword() async => _password = _genCurrentPassword();
+
+  @override
+  bool get numericOtp => _numericOtp;
+
+  @override
+  set numericOtp(bool v) {
+    if (_numericOtp == v) return;
+    _numericOtp = v;
+    // Regenerate so the OTP currently shown on Home matches the new policy.
+    _password = _genCurrentPassword();
+  }
 
   @override
   Stream<List<Peer>> peers() => _peers.stream;
 
   @override
   Future<void> upsertPeer(Peer p) async {
-    // Mock: no persistence. RealBridge will call main_set_peer_alias etc.
+    final i = _peerList.indexWhere((e) => e.id == p.id);
+    if (i >= 0) {
+      _peerList[i] = p;
+    } else {
+      _peerList = <Peer>[..._peerList, p];
+    }
+    _peers.add(_peersSnapshot);
   }
 
   @override
   Future<void> forgetPeer(String id) async {
-    // Mock: no persistence.
+    _peerList.removeWhere((p) => p.id == id);
+    _peers.add(_peersSnapshot);
+  }
+
+  @override
+  Future<void> setPeerAlias(String peerId, String? alias) async {
+    final i = _peerList.indexWhere((p) => p.id == peerId);
+    if (i < 0) return;
+    _peerList[i] = _peerList[i].copyWith(alias: alias);
+    _peers.add(_peersSnapshot);
+  }
+
+  @override
+  Future<void> setPeerOption(String peerId, String key, String value) async {
+    _peerOptions.putIfAbsent(peerId, () => <String, String>{})[key] = value;
+  }
+
+  @override
+  Future<String?> getPeerOption(String peerId, String key) async {
+    return _peerOptions[peerId]?[key];
   }
 
   @override
   Stream<Diagnostics> diagnostics() => _diagnostics.stream;
+
+  @override
+  Future<List<String>> audioInputDevices() async {
+    if (!_demoMode) return const <String>[];
+    return const <String>[
+      'Default',
+      'Realtek HD Audio · Microphone Array',
+      'USB Audio · Blue Yeti',
+    ];
+  }
+
+  @override
+  Future<List<String>> audioOutputDevices() async {
+    if (!_demoMode) return const <String>[];
+    return const <String>[
+      'Default',
+      'Realtek HD Audio · Speakers',
+      'USB Audio · Blue Yeti Output',
+      'AirPods Pro',
+    ];
+  }
 
   @override
   Stream<ConnectEvent> connectEvents() => _connectEvents.stream;
@@ -153,6 +226,9 @@ class MockBridge implements Bridge {
         await Future<void>.delayed(Duration(milliseconds: ms));
         _connectEvents.add(ConnectEvent(peer: peer, stage: stage));
       }
+      // Demo session goes "active" once we hit `connected`.
+      _session = SessionState(peerId: peer.id);
+      _sessionState.add(_session);
     } else {
       // Empty mode: report failure quickly. Without RealBridge the Rust
       // core isn't wired, so an actual handshake is impossible.
@@ -177,16 +253,82 @@ class MockBridge implements Bridge {
   Future<void> cancelConnect() async {}
 
   @override
-  Future<void> disconnect() async {}
+  Future<void> disconnect() async {
+    _session = const SessionState();
+    _sessionState.add(_session);
+  }
+
+  @override
+  Stream<SessionState> sessionState() => _sessionState.stream;
+
+  @override
+  Future<void> requestRestart() async {
+    if (!_demoMode || !_session.inSession) return;
+    // Demo: pretend the remote went away for a moment and came back.
+    _chatEvents.add(ChatMessage(
+      from: ChatSender.peer,
+      text: 'System: remote will reboot in 5s.',
+      time: DateTime.now(),
+    ));
+  }
+
+  @override
+  Future<void> toggleVoiceCall() async {
+    _session = _session.copyWith(voiceActive: !_session.voiceActive);
+    _sessionState.add(_session);
+  }
+
+  @override
+  Future<void> toggleRecording() async {
+    _session = _session.copyWith(recording: !_session.recording);
+    _sessionState.add(_session);
+  }
+
+  @override
+  Future<void> togglePrivacyMode(String key) async {
+    final current = Set<String>.from(_session.privacyModes);
+    if (current.contains(key)) {
+      current.remove(key);
+    } else {
+      current.add(key);
+    }
+    _session = _session.copyWith(privacyModes: current);
+    _sessionState.add(_session);
+  }
+
+  @override
+  Stream<ChatMessage> chatEvents() => _chatEvents.stream;
+
+  @override
+  Future<void> sendChat(String text) async {
+    if (text.trim().isEmpty) return;
+    _chatEvents.add(ChatMessage(
+      from: ChatSender.self,
+      text: text.trim(),
+      time: DateTime.now(),
+    ));
+    if (_demoMode) {
+      // Demo: echo a canned reply 800ms later so the chat doesn't feel dead.
+      Future<void>.delayed(const Duration(milliseconds: 800), () {
+        if (_chatEvents.isClosed) return;
+        _chatEvents.add(ChatMessage(
+          from: ChatSender.peer,
+          text: '👍 (mock peer reply)',
+          time: DateTime.now(),
+        ));
+      });
+    }
+  }
 
   @override
   Stream<List<TransferItem>> transfers() => _transfers.stream;
 
   @override
   Future<void> addTransfer({required String filePath, required TransferDir dir}) async {
+    final name = filePath.split(RegExp(r'[\\/]')).last;
     _queue.add(TransferItem(
       id: _queue.length + 1,
-      name: filePath.split(RegExp(r'[\\/]')).last,
+      name: name,
       size: 1024 * 1024,
       sent: 0,
       dir: dir,
@@ -210,11 +352,20 @@ class MockBridge implements Bridge {
   }
 
   @override
+  String inviteLink({required String id, required String otp}) {
+    final raw = '${id.replaceAll(' ', '')}|$otp';
+    final encoded = base64Url.encode(utf8.encode(raw)).replaceAll('=', '');
+    return 'https://godeskflow.com/c/$encoded';
+  }
+
+  @override
   void dispose() {
     _ticker?.cancel();
     _peers.close();
     _diagnostics.close();
     _connectEvents.close();
     _transfers.close();
+    _sessionState.close();
+    _chatEvents.close();
   }
 }

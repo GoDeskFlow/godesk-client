@@ -24,6 +24,15 @@ String genPassword([Random? rng]) {
   return '${seg()}-${seg()}-${pick(consonants)}${pick(vowels)}';
 }
 
+/// 8-digit numeric password formatted as `xxxx-xxxx`. Easier to dictate over
+/// a phone call than the cv9 form. RuDesktop 2.9.492 parity (Settings →
+/// Security → "Easier-to-dictate password").
+String genNumericPassword([Random? rng]) {
+  final r = rng ?? Random();
+  String four() => List<int>.generate(4, (_) => r.nextInt(10)).join();
+  return '${four()}-${four()}';
+}
+
 /// Bytes → human-readable string.
 String formatBytes(num n) {
   if (n < 1024) return '${n.round()} B';

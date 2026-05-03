@@ -19,6 +19,7 @@ class TransferItem {
     required this.eta,
     this.done = false,
     this.queued = false,
+    this.isFolder = false,
   });
 
   final int id;
@@ -31,7 +32,20 @@ class TransferItem {
   bool done;
   bool queued;
 
+  /// Whether [name] designates a directory rather than a file. Drives folder-first
+  /// ordering in the queue (RuDesktop 2.8.1532 parity).
+  final bool isFolder;
+
   double get progress => done ? 1.0 : queued ? 0.0 : sent / size;
+
+  /// Filename extension without the dot, lowercased. Empty for folders or
+  /// extensionless names. Used by the Ext column on FilesScreen.
+  String get extension {
+    if (isFolder) return '';
+    final dot = name.lastIndexOf('.');
+    if (dot <= 0 || dot == name.length - 1) return '';
+    return name.substring(dot + 1).toLowerCase();
+  }
 }
 
 class CompletedItem {
@@ -59,6 +73,7 @@ List<TransferItem> initialQueue() => <TransferItem>[
       TransferItem(id: 3, name: 'kernel.log', size: 12400000, sent: 4200000, dir: TransferDir.receive, speed: 1900000, eta: 4),
       TransferItem(id: 4, name: 'screenshot-monitor-2.png', size: 4120000, sent: 0, dir: TransferDir.send, speed: 0, eta: 0, queued: true),
       TransferItem(id: 5, name: 'patch-firmware.bin', size: 28700000, sent: 0, dir: TransferDir.send, speed: 0, eta: 0, queued: true),
+      TransferItem(id: 6, name: 'project-assets', size: 612000000, sent: 0, dir: TransferDir.send, speed: 0, eta: 0, queued: true, isFolder: true),
     ];
 
 class TransferController extends ChangeNotifier {

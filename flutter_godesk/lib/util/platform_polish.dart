@@ -32,15 +32,22 @@ import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
 const _bundleId = 'com.godesk.client';
-const _mutexName = 'Global\\GoDesk_SingleInstance_$_bundleId';
+// Per-user namespace — `Global\` requires SE_CREATE_GLOBAL_NAME which
+// non-elevated processes don't have. Without elevation CreateMutexW(Global\)
+// fails entirely and our single-instance check became a permissive no-op,
+// allowing zombie processes to accumulate. Per-user is the correct scope
+// for a desktop app anyway.
+const _mutexName = 'GoDesk_SingleInstance_$_bundleId';
+const _windowTitle = 'GoDesk';
 
 // ─── single-instance ────────────────────────────────────────────────────
 
+bool _isFirstInstance = true;
+
 /// Returns true if this is the first running instance. False = another copy
-/// already holds the mutex; caller should `exit(0)`.
+/// already holds the mutex; caller should ping the existing window and exit.
 bool _acquireSingleInstance() {
   if (!Platform.isWindows) return true;
-  // CreateMutexW(NULL, FALSE, name)
   final kernel32 = ffi.DynamicLibrary.open('kernel32.dll');
   final createMutex = kernel32.lookupFunction<
       ffi.IntPtr Function(ffi.Pointer<ffi.Void>, ffi.Int32, ffi.Pointer<Utf16>),
@@ -51,21 +58,68 @@ bool _acquireSingleInstance() {
   final namePtr = _mutexName.toNativeUtf16();
   try {
     final handle = createMutex(ffi.nullptr, 0, namePtr);
-    if (handle == 0) return true; // failed to create — proceed permissively
     const errorAlreadyExists = 183;
-    return getLastError() != errorAlreadyExists;
+    final lastError = getLastError();
+    if (handle == 0) {
+      // CreateMutexW genuinely failed (very rare). Proceed permissively
+      // rather than blocking the user from launching at all.
+      // ignore: avoid_print
+      print('[GoDesk] CreateMutexW failed (err=$lastError) — proceeding.');
+      return true;
+    }
+    return lastError != errorAlreadyExists;
   } finally {
     calloc.free(namePtr);
   }
 }
 
-/// Exits this process if another instance already holds the mutex.
+/// If another instance is already running, bring its window forward (so the
+/// user sees something happen) and exit this process. Otherwise return; the
+/// caller proceeds with normal startup.
+///
 /// Call BEFORE `runApp` from `main()`.
 void enforceSingleInstance() {
-  if (!_acquireSingleInstance()) {
-    // ignore: avoid_print
-    print('[GoDesk] Another instance is already running — exiting.');
-    exit(0);
+  if (_acquireSingleInstance()) return;
+  _isFirstInstance = false;
+  _wakeExistingInstance();
+  // ignore: avoid_print
+  print('[GoDesk] Another instance is already running — focusing it and exiting.');
+  exit(0);
+}
+
+bool get isFirstInstance => _isFirstInstance;
+
+/// Find the running GoDesk window and bring it to the foreground. Used when
+/// a second launch attempt is detected — gives the user immediate feedback
+/// that "the app is already open" instead of a silent no-op.
+void _wakeExistingInstance() {
+  if (!Platform.isWindows) return;
+  try {
+    final user32 = ffi.DynamicLibrary.open('user32.dll');
+
+    final findWindow = user32.lookupFunction<
+        ffi.IntPtr Function(ffi.Pointer<Utf16>, ffi.Pointer<Utf16>),
+        int Function(ffi.Pointer<Utf16>, ffi.Pointer<Utf16>)>('FindWindowW');
+    final showWindow = user32.lookupFunction<
+        ffi.Int32 Function(ffi.IntPtr, ffi.Int32),
+        int Function(int, int)>('ShowWindow');
+    final setForeground = user32.lookupFunction<
+        ffi.Int32 Function(ffi.IntPtr),
+        int Function(int)>('SetForegroundWindow');
+
+    final titlePtr = _windowTitle.toNativeUtf16();
+    try {
+      // Search by title only (lpClassName = NULL).
+      final hwnd = findWindow(ffi.nullptr.cast<Utf16>(), titlePtr);
+      if (hwnd == 0) return;
+      const swRestore = 9;
+      showWindow(hwnd, swRestore);
+      setForeground(hwnd);
+    } finally {
+      calloc.free(titlePtr);
+    }
+  } catch (_) {
+    // Best-effort — failure here just means user has to find the tray icon.
   }
 }
 

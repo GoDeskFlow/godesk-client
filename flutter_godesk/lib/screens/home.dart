@@ -29,6 +29,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _peerInput = TextEditingController();
+  final TextEditingController _searchInput = TextEditingController();
   String _password = '';
   Identity? _identity;
   List<Peer> _peers = const <Peer>[];
@@ -37,8 +38,19 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _showPw = false;
   bool _copiedId = false;
   bool _copiedPw = false;
+  bool _copiedInvite = false;
 
   Bridge get _bridge => BridgeProvider.of(context);
+
+  /// Filter peers by [_searchInput] — matches displayName, tag, or id (case-insensitive).
+  List<Peer> get _visiblePeers {
+    final q = _searchInput.text.trim().toLowerCase();
+    if (q.isEmpty) return _peers;
+    return _peers.where((p) {
+      final hay = '${p.displayName} ${p.tag} ${p.id}'.toLowerCase();
+      return hay.contains(q);
+    }).toList();
+  }
 
   @override
   void didChangeDependencies() {
@@ -57,6 +69,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _peerInput.dispose();
+    _searchInput.dispose();
     _diagSub?.cancel();
     super.dispose();
   }
@@ -76,6 +89,91 @@ class _HomeScreenState extends State<HomeScreen> {
     Future<void>.delayed(const Duration(milliseconds: 1400), () {
       if (mounted) setState(() => _copiedPw = false);
     });
+  }
+
+  void _copyInvite() {
+    if (_identity == null || _password.isEmpty) return;
+    final link = _bridge.inviteLink(id: _identity!.id, otp: _password);
+    Clipboard.setData(ClipboardData(text: link));
+    setState(() => _copiedInvite = true);
+    Future<void>.delayed(const Duration(milliseconds: 1400), () {
+      if (mounted) setState(() => _copiedInvite = false);
+    });
+  }
+
+  Future<void> _editAlias(Peer peer) async {
+    final controller = TextEditingController(text: peer.alias ?? '');
+    final t = Theme.of(context).extension<GoDeskTheme>()!;
+    final result = await showDialog<String?>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          backgroundColor: t.panel,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+            side: BorderSide(color: t.border),
+          ),
+          title: Text(
+            'Rename peer',
+            style: GDtype.ui(size: 14, weight: FontWeight.w700, color: t.heading),
+          ),
+          content: SizedBox(
+            width: 320,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  'Original: ${peer.name}  ·  ${peer.id}',
+                  style: GDtype.mono(size: 11, color: t.subtle),
+                ),
+                const SizedBox(height: 10),
+                LCDPanel(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  child: TextField(
+                    controller: controller,
+                    autofocus: true,
+                    cursorColor: t.lcdInk,
+                    decoration: InputDecoration(
+                      border: InputBorder.none,
+                      isCollapsed: true,
+                      hintText: 'Display name…',
+                      hintStyle: lcdReadout(theme: t, size: 13).copyWith(color: t.lcdDim),
+                    ),
+                    style: lcdReadout(theme: t, size: 13),
+                    onSubmitted: (v) => Navigator.of(ctx).pop(v),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: <Widget>[
+            TactileButton(
+              small: true,
+              onPressed: () => Navigator.of(ctx).pop(null),
+              child: const Text('CANCEL'),
+            ),
+            if ((peer.alias ?? '').isNotEmpty)
+              TactileButton(
+                small: true,
+                variant: TactileVariant.danger,
+                onPressed: () => Navigator.of(ctx).pop(''),
+                child: const Text('CLEAR'),
+              ),
+            TactileButton(
+              small: true,
+              variant: TactileVariant.primary,
+              onPressed: () => Navigator.of(ctx).pop(controller.text),
+              child: const Text('SAVE'),
+            ),
+          ],
+        );
+      },
+    );
+    controller.dispose();
+    if (result == null) return;
+    final trimmed = result.trim();
+    await _bridge.setPeerAlias(peer.id, trimmed.isEmpty ? null : trimmed);
   }
 
   void _attemptConnect() {
@@ -167,13 +265,31 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               const SizedBox(height: 10),
-              SizedBox(
-                width: double.infinity,
-                child: TactileButton(
-                  variant: _copiedId ? TactileVariant.defaultStyle : TactileVariant.primary,
-                  onPressed: _copyId,
-                  child: Text(_copiedId ? 'COPIED' : 'COPY ID'),
-                ),
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: TactileButton(
+                      variant: _copiedId ? TactileVariant.defaultStyle : TactileVariant.primary,
+                      onPressed: _copyId,
+                      child: Text(_copiedId ? 'COPIED' : 'COPY ID'),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: TactileButton(
+                      onPressed: _identity == null || _password.isEmpty ? null : _copyInvite,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: <Widget>[
+                          const Icon(Icons.link, size: 12),
+                          const SizedBox(width: 4),
+                          Text(_copiedInvite ? 'LINK COPIED' : 'INVITE LINK'),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -415,7 +531,7 @@ class _HomeScreenState extends State<HomeScreen> {
           children: <Widget>[
             // Header bar
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
@@ -426,26 +542,25 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 border: Border(bottom: BorderSide(color: t.border)),
               ),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
-                  const SectionLabel('Address Book'),
-                  const Spacer(),
-                  _entriesPlate(t),
+                  Row(
+                    children: <Widget>[
+                      const SectionLabel('Address Book'),
+                      const Spacer(),
+                      _entriesPlate(t),
+                    ],
+                  ),
+                  if (_peers.isNotEmpty) ...<Widget>[
+                    const SizedBox(height: 8),
+                    _searchBar(t),
+                  ],
                 ],
               ),
             ),
             Expanded(
-              child: _peers.isEmpty
-                  ? _AddressBookEmpty(theme: t)
-                  : ListView.builder(
-                      padding: EdgeInsets.zero,
-                      itemCount: _peers.length,
-                      itemBuilder: (context, i) => _PeerRow(
-                        peer: _peers[i],
-                        isLast: i == _peers.length - 1,
-                        onTap: () => widget.onConnect(_peers[i]),
-                      ),
-                    ),
+              child: _buildPeerList(t),
             ),
           ],
         ),
@@ -454,6 +569,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _entriesPlate(GoDeskTheme t) {
+    final visible = _visiblePeers.length;
+    final total = _peers.length;
+    final filtered = _searchInput.text.trim().isNotEmpty && visible != total;
+    final label = filtered ? '$visible / $total ENTRIES' : '$total ENTRIES';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
@@ -473,7 +592,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             Text(
-              '${_peers.length} ENTRIES',
+              label,
               style: GDtype.mono(size: 9, weight: FontWeight.w700, color: t.subtle, letterSpacing: 0.5),
             ),
           ],
@@ -481,13 +600,90 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+
+  Widget _searchBar(GoDeskTheme t) {
+    final hasQuery = _searchInput.text.isNotEmpty;
+    return LCDPanel(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      child: SizedBox(
+        height: 26,
+        child: Row(
+          children: <Widget>[
+            Icon(Icons.search, size: 13, color: t.lcdDim),
+            const SizedBox(width: 6),
+            Expanded(
+              child: TextField(
+                controller: _searchInput,
+                onChanged: (_) => setState(() {}),
+                cursorColor: t.lcdInk,
+                decoration: InputDecoration(
+                  border: InputBorder.none,
+                  isCollapsed: true,
+                  hintText: 'Search by name, tag, or ID',
+                  hintStyle: lcdReadout(theme: t, size: 11).copyWith(color: t.lcdDim),
+                ),
+                style: lcdReadout(theme: t, size: 11),
+              ),
+            ),
+            if (hasQuery)
+              MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () {
+                    _searchInput.clear();
+                    setState(() {});
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Icon(Icons.close, size: 13, color: t.lcdDim),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPeerList(GoDeskTheme t) {
+    if (_peers.isEmpty) return _AddressBookEmpty(theme: t);
+    final visible = _visiblePeers;
+    if (visible.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            'No peers match "${_searchInput.text}".',
+            style: GDtype.ui(size: 11, color: t.subtle),
+          ),
+        ),
+      );
+    }
+    return ListView.builder(
+      padding: EdgeInsets.zero,
+      itemCount: visible.length,
+      itemBuilder: (context, i) => _PeerRow(
+        peer: visible[i],
+        isLast: i == visible.length - 1,
+        onTap: () => widget.onConnect(visible[i]),
+        onEditAlias: () => _editAlias(visible[i]),
+      ),
+    );
+  }
 }
 
 class _PeerRow extends StatefulWidget {
-  const _PeerRow({required this.peer, required this.isLast, required this.onTap});
+  const _PeerRow({
+    required this.peer,
+    required this.isLast,
+    required this.onTap,
+    required this.onEditAlias,
+  });
   final Peer peer;
   final bool isLast;
   final VoidCallback onTap;
+  final VoidCallback onEditAlias;
 
   @override
   State<_PeerRow> createState() => _PeerRowState();
@@ -499,6 +695,7 @@ class _PeerRowState extends State<_PeerRow> {
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).extension<GoDeskTheme>()!;
+    final hasAlias = widget.peer.alias != null && widget.peer.alias!.trim().isNotEmpty;
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
@@ -524,11 +721,25 @@ class _PeerRowState extends State<_PeerRow> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    Text(widget.peer.name,
-                        style: GDtype.ui(size: 12, weight: FontWeight.w700, color: t.heading)),
+                    Row(
+                      children: <Widget>[
+                        Flexible(
+                          child: Text(widget.peer.displayName,
+                              overflow: TextOverflow.ellipsis,
+                              style: GDtype.ui(size: 12, weight: FontWeight.w700, color: t.heading)),
+                        ),
+                        if (hasAlias) ...<Widget>[
+                          const SizedBox(width: 6),
+                          Icon(Icons.edit, size: 10, color: t.subtle),
+                        ],
+                      ],
+                    ),
                     const SizedBox(height: 1),
-                    Text(widget.peer.id,
-                        style: GDtype.mono(size: 10, color: t.subtle)),
+                    Text(
+                      hasAlias ? '${widget.peer.name} · ${widget.peer.id}' : widget.peer.id,
+                      style: GDtype.mono(size: 10, color: t.subtle),
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ],
                 ),
               ),
@@ -541,6 +752,41 @@ class _PeerRowState extends State<_PeerRow> {
                   widget.peer.lastSeen,
                   textAlign: TextAlign.right,
                   style: GDtype.mono(size: 10, color: t.subtle),
+                ),
+              ),
+              const SizedBox(width: 6),
+              SizedBox(
+                width: 22,
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 120),
+                  opacity: _hovered ? 1 : 0,
+                  child: Tooltip(
+                    message: 'Rename peer',
+                    child: MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () {
+                          // Don't bubble to the row's onTap (which would connect).
+                          widget.onEditAlias();
+                        },
+                        child: Container(
+                          width: 22,
+                          height: 22,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: <Color>[t.panelHi, t.panel],
+                            ),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: t.border),
+                          ),
+                          child: Icon(Icons.edit_outlined, size: 12, color: t.body),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ],
