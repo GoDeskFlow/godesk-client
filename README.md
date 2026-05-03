@@ -1,182 +1,134 @@
-<p align="center">
-  <img src="res/logo-header.svg" alt="RustDesk - Your remote desktop"><br>
-  <a href="#raw-steps-to-build">Build</a> •
-  <a href="#how-to-build-with-docker">Docker</a> •
-  <a href="#file-structure">Structure</a> •
-  <a href="#snapshot">Snapshot</a><br>
-  [<a href="docs/README-UA.md">Українська</a>] | [<a href="docs/README-CS.md">česky</a>] | [<a href="docs/README-ZH.md">中文</a>] | [<a href="docs/README-HU.md">Magyar</a>] | [<a href="docs/README-ES.md">Español</a>] | [<a href="docs/README-FA.md">فارسی</a>] | [<a href="docs/README-FR.md">Français</a>] | [<a href="docs/README-DE.md">Deutsch</a>] | [<a href="docs/README-PL.md">Polski</a>] | [<a href="docs/README-ID.md">Indonesian</a>] | [<a href="docs/README-FI.md">Suomi</a>] | [<a href="docs/README-ML.md">മലയാളം</a>] | [<a href="docs/README-JP.md">日本語</a>] | [<a href="docs/README-NL.md">Nederlands</a>] | [<a href="docs/README-IT.md">Italiano</a>] | [<a href="docs/README-RU.md">Русский</a>] | [<a href="docs/README-PTBR.md">Português (Brasil)</a>] | [<a href="docs/README-EO.md">Esperanto</a>] | [<a href="docs/README-KR.md">한국어</a>] | [<a href="docs/README-AR.md">العربي</a>] | [<a href="docs/README-VN.md">Tiếng Việt</a>] | [<a href="docs/README-DA.md">Dansk</a>] | [<a href="docs/README-GR.md">Ελληνικά</a>] | [<a href="docs/README-TR.md">Türkçe</a>] | [<a href="docs/README-NO.md">Norsk</a>] | [<a href="docs/README-RO.md">Română</a>]<br>
-  <b>We need your help to translate this README, <a href="https://github.com/rustdesk/rustdesk/tree/master/src/lang">RustDesk UI</a> and <a href="https://github.com/rustdesk/doc.rustdesk.com">RustDesk Doc</a> to your native language</b>
-</p>
+<div align="center">
 
-> [!Caution]
-> **Misuse Disclaimer:** <br>
-> The developers of RustDesk do not condone or support any unethical or illegal use of this software. Misuse, such as unauthorized access, control or invasion of privacy, is strictly against our guidelines. The authors are not responsible for any misuse of the application.
+# GoDesk
 
+**Encrypted remote desktop with a tactile, hardware-instrument UI.**
+Fork of [RustDesk](https://github.com/rustdesk/rustdesk) under AGPL-3.0.
 
-Chat with us: [Discord](https://discord.gg/nDceKgxnkV) | [Twitter](https://twitter.com/rustdesk) | [Reddit](https://www.reddit.com/r/rustdesk) | [YouTube](https://www.youtube.com/@rustdesk)
+[Download](https://godeskflow.com) • [Source](https://github.com/GoDeskFlow) • [Docs](https://github.com/GoDeskFlow/godesk-docs) • [Privacy](https://github.com/GoDeskFlow/godesk-docs/blob/main/privacy.md)
 
-[![RustDesk Server Pro](https://img.shields.io/badge/RustDesk%20Server%20Pro-Advanced%20Features-blue)](https://rustdesk.com/pricing.html)
+![GoDesk Home screen](docs/screenshots/home.png)
 
-Yet another remote desktop solution, written in Rust. Works out of the box with no configuration required. You have full control of your data, with no concerns about security. You can use our rendezvous/relay server, [set up your own](https://rustdesk.com/server), or [write your own rendezvous/relay server](https://github.com/rustdesk/rustdesk-server-demo).
+</div>
 
-![image](https://user-images.githubusercontent.com/71636191/171661982-430285f0-2e12-4b1d-9957-4a58e375304d.png)
+---
 
-RustDesk welcomes contribution from everyone. See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for help getting started.
+## What it is
 
-[**FAQ**](https://github.com/rustdesk/rustdesk/wiki/FAQ)
+GoDesk lets you control any computer over the internet — encrypted
+end-to-end, peer-to-peer when network conditions allow, with no account
+required. Connect by 9-digit ID + one-time code.
 
-[**BINARY DOWNLOAD**](https://github.com/rustdesk/rustdesk/releases)
+**Status: pre-public-launch.** Server-side infrastructure is live at
+godeskflow.com. Signed Windows installer ships once code-signing
+certificate validation completes. Open issues for bugs you find in the
+unsigned beta.
 
-[**NIGHTLY BUILD**](https://github.com/rustdesk/rustdesk/releases/tag/nightly)
+## Why this fork exists
 
-[<img src="https://f-droid.org/badge/get-it-on.png"
-    alt="Get it on F-Droid"
-    height="80">](https://f-droid.org/en/packages/com.carriez.flutter_hbb)
-[<img src="https://flathub.org/api/badge?svg&locale=en"
-    alt="Get it on Flathub"
-    height="80">](https://flathub.org/apps/com.rustdesk.RustDesk)
-
-## Dependencies
-
-Desktop versions use Flutter or Sciter (deprecated) for GUI, this tutorial is for Sciter only, since it is easier and more friendly to start. Check out our [CI](https://github.com/rustdesk/rustdesk/blob/master/.github/workflows/flutter-build.yml) for building Flutter version.
-
-Please download Sciter dynamic library yourself.
-
-[Windows](https://raw.githubusercontent.com/c-smile/sciter-sdk/master/bin.win/x64/sciter.dll) |
-[Linux](https://raw.githubusercontent.com/c-smile/sciter-sdk/master/bin.lnx/x64/libsciter-gtk.so) |
-[macOS](https://raw.githubusercontent.com/c-smile/sciter-sdk/master/bin.osx/libsciter.dylib)
-
-## Raw Steps to build
-
-- Prepare your Rust development env and C++ build env
-
-- Install [vcpkg](https://github.com/microsoft/vcpkg), and set `VCPKG_ROOT` env variable correctly
-
-  - Windows: vcpkg install libvpx:x64-windows-static libyuv:x64-windows-static opus:x64-windows-static aom:x64-windows-static
-  - Linux/macOS: vcpkg install libvpx libyuv opus aom
-
-- run `cargo run`
-
-## [Build](https://rustdesk.com/docs/en/dev/build/)
-
-## How to Build on Linux
-
-### Ubuntu 18 (Debian 10)
-
-```sh
-sudo apt install -y zip g++ gcc git curl wget nasm yasm libgtk-3-dev clang libxcb-randr0-dev libxdo-dev \
-        libxfixes-dev libxcb-shape0-dev libxcb-xfixes0-dev libasound2-dev libpulse-dev cmake make \
-        libclang-dev ninja-build libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev
-```
-
-### openSUSE Tumbleweed
-
-```sh
-sudo zypper install gcc-c++ git curl wget nasm yasm gcc gtk3-devel clang libxcb-devel libXfixes-devel cmake alsa-lib-devel gstreamer-devel gstreamer-plugins-base-devel xdotool-devel pam-devel
-```
-
-### Fedora 28 (CentOS 8)
-
-```sh
-sudo yum -y install gcc-c++ git curl wget nasm yasm gcc gtk3-devel clang libxcb-devel libxdo-devel libXfixes-devel pulseaudio-libs-devel cmake alsa-lib-devel gstreamer1-devel gstreamer1-plugins-base-devel pam-devel
-```
-
-### Arch (Manjaro)
-
-```sh
-sudo pacman -Syu --needed unzip git cmake gcc curl wget yasm nasm zip make pkg-config clang gtk3 xdotool libxcb libxfixes alsa-lib pipewire
-```
-
-### Install vcpkg
-
-```sh
-git clone https://github.com/microsoft/vcpkg
-cd vcpkg
-git checkout 2023.04.15
-cd ..
-vcpkg/bootstrap-vcpkg.sh
-export VCPKG_ROOT=$HOME/vcpkg
-vcpkg/vcpkg install libvpx libyuv opus aom
-```
-
-### Fix libvpx (For Fedora)
-
-```sh
-cd vcpkg/buildtrees/libvpx/src
-cd *
-./configure
-sed -i 's/CFLAGS+=-I/CFLAGS+=-fPIC -I/g' Makefile
-sed -i 's/CXXFLAGS+=-I/CXXFLAGS+=-fPIC -I/g' Makefile
-make
-cp libvpx.a $HOME/vcpkg/installed/x64-linux/lib/
-cd
-```
-
-### Build
-
-```sh
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source $HOME/.cargo/env
-git clone --recurse-submodules https://github.com/rustdesk/rustdesk
-cd rustdesk
-mkdir -p target/debug
-wget https://raw.githubusercontent.com/c-smile/sciter-sdk/master/bin.lnx/x64/libsciter-gtk.so
-mv libsciter-gtk.so target/debug
-VCPKG_ROOT=$HOME/vcpkg cargo run
-```
-
-## How to build with Docker
-
-Begin by cloning the repository and building the Docker container:
-
-```sh
-git clone https://github.com/rustdesk/rustdesk
-cd rustdesk
-git submodule update --init --recursive
-docker build -t "rustdesk-builder" .
-```
-
-Then, each time you need to build the application, run the following command:
-
-```sh
-docker run --rm -it -v $PWD:/home/user/rustdesk -v rustdesk-git-cache:/home/user/.cargo/git -v rustdesk-registry-cache:/home/user/.cargo/registry -e PUID="$(id -u)" -e PGID="$(id -g)" rustdesk-builder
-```
-
-Note that the first build may take longer before dependencies are cached, subsequent builds will be faster. Additionally, if you need to specify different arguments to the build command, you may do so at the end of the command in the `<OPTIONAL-ARGS>` position. For instance, if you wanted to build an optimized release version, you would run the command above followed by `--release`. The resulting executable will be available in the target folder on your system, and can be run with:
-
-```sh
-target/debug/rustdesk
-```
-
-Or, if you're running a release executable:
-
-```sh
-target/release/rustdesk
-```
-
-Please ensure that you run these commands from the root of the RustDesk repository, or the application may not find the required resources. Also note that other cargo subcommands such as `install` or `run` are not currently supported via this method as they would install or run the program inside the container instead of the host.
-
-## File Structure
-
-- **[libs/hbb_common](https://github.com/rustdesk/rustdesk/tree/master/libs/hbb_common)**: video codec, config, tcp/udp wrapper, protobuf, fs functions for file transfer, and some other utility functions
-- **[libs/scrap](https://github.com/rustdesk/rustdesk/tree/master/libs/scrap)**: screen capture
-- **[libs/enigo](https://github.com/rustdesk/rustdesk/tree/master/libs/enigo)**: platform specific keyboard/mouse control
-- **[libs/clipboard](https://github.com/rustdesk/rustdesk/tree/master/libs/clipboard)**: file copy and paste implementation for Windows, Linux, macOS.
-- **[src/ui](https://github.com/rustdesk/rustdesk/tree/master/src/ui)**: obsolete Sciter UI (deprecated)
-- **[src/server](https://github.com/rustdesk/rustdesk/tree/master/src/server)**: audio/clipboard/input/video services, and network connections
-- **[src/client.rs](https://github.com/rustdesk/rustdesk/tree/master/src/client.rs)**: start a peer connection
-- **[src/rendezvous_mediator.rs](https://github.com/rustdesk/rustdesk/tree/master/src/rendezvous_mediator.rs)**: Communicate with [rustdesk-server](https://github.com/rustdesk/rustdesk-server), wait for remote direct (TCP hole punching) or relayed connection
-- **[src/platform](https://github.com/rustdesk/rustdesk/tree/master/src/platform)**: platform specific code
-- **[flutter](https://github.com/rustdesk/rustdesk/tree/master/flutter)**: Flutter code for desktop and mobile
-- **[flutter/web/js](https://github.com/rustdesk/rustdesk/tree/master/flutter/web/v1/js)**: JavaScript for Flutter web client
+[RustDesk](https://github.com/rustdesk/rustdesk) is excellent technology
+with a generic Material UI. We replaced that UI entirely with a
+skeuomorphic, Dieter-Rams-inspired design — brushed metal panels,
+beveled tactile buttons, glowing LCD readouts, physical knobs, ambient
+LED indicators. The Rust core, networking protocol, and platform-API
+layer remain inherited (small delta from upstream); only the UI is full
+replacement. See [ADR-010](../wiki/decisions.md) and [ADR-011](../wiki/decisions.md) for the rationale.
 
 ## Screenshots
 
-![Connection Manager](https://github.com/rustdesk/rustdesk/assets/28412477/db82d4e7-c4bc-4823-8e6f-6af7eadf7651)
+|||
+|:-:|:-:|
+| ![Home](docs/screenshots/home.png) **Home** — your ID, OTP, diagnostics, address book, connect by remote ID | ![Files](docs/screenshots/files.png) **Files** — analog VU meters, transfer queue, throughput readout |
+| ![Settings](docs/screenshots/settings.png) **Settings** — General / Video & Audio / Security / Network / About | ![Onboarding](docs/screenshots/onboarding.png) **Onboarding** — 4-step first-run wizard |
+| ![Connecting](docs/screenshots/connecting.png) **Connecting overlay** — radar pulse + 4-stage handshake | ![Session](docs/screenshots/session.png) **Active session** — floating toolbar over remote desktop |
 
-![Connected to a Windows PC](https://github.com/rustdesk/rustdesk/assets/28412477/9baa91e9-3362-4d06-aa1a-7518edcbd7ea)
+[Widget kit demo](docs/screenshots/kit.png) — every primitive in the skeuo
+kit (TactileButton, LCDPanel, MetalPanel, Toggle, Knob, VUMeter,
+StatusLED, SectionLabel, SkeuoChrome) on one screen.
 
-![File Transfer](https://github.com/rustdesk/rustdesk/assets/28412477/39511ad3-aa9a-4f8c-8947-1cce286a46ad)
+## Install
 
-![TCP Tunneling](https://github.com/rustdesk/rustdesk/assets/28412477/78e8708f-e87e-4570-8373-1360033ea6c5)
+### Windows
 
+Pre-built installer: <https://godeskflow.com/downloads/windows> *(coming
+soon, awaiting code-signing cert)*. Until then, build from source per the
+upstream RustDesk instructions and substitute `flutter_godesk/` for the
+Flutter dir:
+
+```powershell
+git clone https://github.com/GoDeskFlow/godesk-client
+cd godesk-client
+git submodule update --init --recursive
+python build_godesk_patch.py     # one-line patch to upstream build.py
+python build.py --flutter --portable
+```
+
+Output: `build/windows/x64/runner/Release/godesk.exe`.
+
+macOS, Linux, Android, iOS clients are on the roadmap (Phase 5+).
+
+## Architecture
+
+This repo is the **client**. Other GoDeskFlow repos:
+
+- [godesk-server](https://github.com/GoDeskFlow/godesk-server) — `hbbs`
+  (signaling) + `hbbr` (relay) — fork of `rustdesk-server`
+- [godesk-infra](https://github.com/GoDeskFlow/godesk-infra) — Docker
+  compose + NSIS installer + deployment
+- [godesk-docs](https://github.com/GoDeskFlow/godesk-docs) — public
+  end-user documentation
+
+## Project layout
+
+```
+client/
+├── flutter/                 upstream RustDesk Flutter UI — untouched, reference only
+├── flutter_godesk/          OUR overlay — skeuomorphic UI
+│   ├── lib/
+│   │   ├── theme/             tokens, bevels, GoDeskTheme, typography, tweaks (persisted)
+│   │   ├── kit/               9 widget primitives ported from the design handoff
+│   │   ├── chrome/            44px brushed-metal title bar (frameless window)
+│   │   ├── screens/           home, files, settings, onboarding, connecting, session
+│   │   ├── bridge/            Bridge interface + MockBridge (default) + RealBridge (TODO)
+│   │   ├── config/            compile-time infra constants
+│   │   └── util/              format, a11y, platform_polish (tray + single-instance)
+│   ├── assets/fonts/          Inter, JetBrains Mono — bundled, offline-first
+│   └── windows/runner/        frameless Win32 host
+├── src/                     RustDesk Rust core — small delta from upstream
+└── build_godesk_patch.py    idempotent patcher for upstream build.py
+```
+
+## Phase status
+
+| | What | Done? |
+|:-:|---|:-:|
+| 0 | Decisions (path, license, brand, infra, markets) | ✅ |
+| 1 | Forks + clean upstream server build | ✅ |
+| 2.0 | Theme tokens + persistence + first window | ✅ |
+| 2.1 | 9-widget skeuomorphic kit | ✅ |
+| 2.2 | All 6 screens + routing + onboarding | ✅ |
+| 2.3 | Bundled fonts + a11y + frameless chrome + tray + crash log | ✅ |
+| 2.4 | Bridge interface decoupling | ✅ |
+| 2.4 | RealBridge wiring to Rust core (FFI) | 🟡 awaiting cargo-build session |
+| 3 | Production hbbs+hbbr live on godeskflow.com | ✅ |
+| 4 | NSIS installer (unsigned) | ✅ |
+| 4 | Code-signing certificate purchase + signing | 🟡 awaiting Cyprus ROC clearing |
+| 4 | hbbr split to dedicated VPS before public launch | 🔲 |
+| 5 | Public docs (source, privacy, EULA, install, troubleshoot, security) | ✅ |
+| 5 | Public launch announcement | 🔲 post-cert |
+
+## Contributing
+
+See [CONTRIBUTING.md](../CONTRIBUTING.md). Bugs and feature requests
+welcome via [Issues](https://github.com/GoDeskFlow/godesk-client/issues).
+Security: see [docs/security.md](https://github.com/GoDeskFlow/godesk-docs/blob/main/security.md).
+
+## License
+
+[AGPL-3.0-only](../LICENSE). Source code distributed with every binary
+per AGPL §13. See [NOTICE](../NOTICE) for upstream attribution and
+significant modifications.
+
+The "GoDesk" name and logo are trademarks of UPDEVTEAM LTD. The AGPL
+grants you rights to the code, not to the trademark — please rename
+forks.

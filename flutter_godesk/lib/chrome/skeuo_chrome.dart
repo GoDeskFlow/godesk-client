@@ -1,8 +1,14 @@
 // SkeuoChrome — 44px brushed-metal title bar with traffic lights, GoDesk
 // wordmark, segmented screen tabs, and a serial-number plate on the right.
 // Direct port of `SkeuoChrome` from godesk-skeuo-chrome.jsx.
+//
+// Phase 2.3 final: this IS the OS chrome. The Win11 native title bar is
+// hidden (`window_manager.titleBarStyle: hidden`), so we wrap the chrome in
+// `DragToMoveArea` and wire the traffic lights to real close/minimize/
+// maximize actions. No more "app inside an app" stacking.
 
 import 'package:flutter/material.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../kit/_internal/inset_painter.dart';
 import '../theme/godesk_theme.dart';
@@ -26,14 +32,15 @@ class SkeuoChrome extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).extension<GoDeskTheme>()!;
-    return Container(
-      height: 44,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      decoration: BoxDecoration(
-        gradient: t.chromeGradient,
-        border: Border(bottom: BorderSide(color: t.chromeBorder)),
-      ),
-      child: Stack(
+    return DragToMoveArea(
+      child: Container(
+        height: 44,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          gradient: t.chromeGradient,
+          border: Border(bottom: BorderSide(color: t.chromeBorder)),
+        ),
+        child: Stack(
         children: <Widget>[
           // Brushed-metal vertical stripes overlay.
           Positioned.fill(
@@ -79,6 +86,7 @@ class SkeuoChrome extends StatelessWidget {
             ],
           ),
         ],
+      ),
       ),
     );
   }
@@ -252,30 +260,68 @@ class _TrafficLights extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Row(
-      children: const <Widget>[
-        _TrafficDot(color: Color(0xFFFF5F57)),
-        SizedBox(width: 6),
-        _TrafficDot(color: Color(0xFFFEBC2E)),
-        SizedBox(width: 6),
-        _TrafficDot(color: Color(0xFF28C840)),
+      children: <Widget>[
+        _TrafficDot(
+          color: const Color(0xFFFF5F57),
+          tooltip: 'Close (hide to tray)',
+          onTap: () async {
+            // setPreventClose intercepts and routes to TrayController.onWindowClose,
+            // which calls windowManager.hide(). User can still Quit from tray menu.
+            await windowManager.close();
+          },
+        ),
+        const SizedBox(width: 6),
+        _TrafficDot(
+          color: const Color(0xFFFEBC2E),
+          tooltip: 'Minimize',
+          onTap: () => windowManager.minimize(),
+        ),
+        const SizedBox(width: 6),
+        _TrafficDot(
+          color: const Color(0xFF28C840),
+          tooltip: 'Maximize / restore',
+          onTap: () async {
+            if (await windowManager.isMaximized()) {
+              await windowManager.unmaximize();
+            } else {
+              await windowManager.maximize();
+            }
+          },
+        ),
       ],
     );
   }
 }
 
 class _TrafficDot extends StatelessWidget {
-  const _TrafficDot({required this.color});
+  const _TrafficDot({
+    required this.color,
+    required this.tooltip,
+    required this.onTap,
+  });
   final Color color;
+  final String tooltip;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 12,
-      height: 12,
-      decoration: BoxDecoration(
-        color: color,
-        shape: BoxShape.circle,
-        border: Border.all(color: Colors.black.withValues(alpha: 0.15), width: 0.5),
+    return Tooltip(
+      message: tooltip,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: Container(
+            width: 12,
+            height: 12,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.black.withValues(alpha: 0.15), width: 0.5),
+            ),
+          ),
+        ),
       ),
     );
   }

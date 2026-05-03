@@ -4,6 +4,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../bridge/bridge.dart';
+import '../bridge/provider.dart';
 import '../data/peers.dart';
 import '../kit/_internal/inset_painter.dart';
 import '../kit/lcd_panel.dart';
@@ -25,13 +27,29 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _peerInput = TextEditingController();
-  String _password = initialPassword;
+  String _password = '';
+  Identity? _identity;
+  List<Peer> _peers = const <Peer>[];
   bool _showPw = false;
   bool _copiedId = false;
   bool _copiedPw = false;
 
+  Bridge get _bridge => BridgeProvider.of(context);
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _bridge.identity().then((id) {
+      if (mounted) setState(() => _identity = id);
+    });
+    _bridge.oneTimePassword().then((p) {
+      if (mounted) setState(() => _password = p);
+    });
+  }
+
   void _copyId() {
-    Clipboard.setData(const ClipboardData(text: myId));
+    if (_identity == null) return;
+    Clipboard.setData(ClipboardData(text: _identity!.id));
     setState(() => _copiedId = true);
     Future<void>.delayed(const Duration(milliseconds: 1400), () {
       if (mounted) setState(() => _copiedId = false);
@@ -50,7 +68,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final raw = _peerInput.text.replaceAll(RegExp(r'\D'), '');
     if (raw.isEmpty) return;
     final formatted = formatId(_peerInput.text);
-    final peer = recentPeers.cast<Peer?>().firstWhere(
+    final peer = _peers.cast<Peer?>().firstWhere(
           (p) => p!.id == formatted,
           orElse: () => Peer(
             id: formatted,
@@ -73,6 +91,16 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).extension<GoDeskTheme>()!;
+    return StreamBuilder<List<Peer>>(
+      stream: _bridge.peers(),
+      builder: (context, snap) {
+        if (snap.hasData) _peers = snap.data!;
+        return _bg(t);
+      },
+    );
+  }
+
+  Widget _bg(GoDeskTheme t) {
     return DecoratedBox(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -124,7 +152,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: <Widget>[
                     Text('> ID:', style: lcdDimLabel(theme: t)),
                     const SizedBox(height: 4),
-                    Text(myId, style: lcdReadout(theme: t, size: 26)),
+                    Text(_identity?.id ?? '— — —', style: lcdReadout(theme: t, size: 26)),
                   ],
                 ),
               ),
@@ -398,11 +426,11 @@ class _HomeScreenState extends State<HomeScreen> {
             Expanded(
               child: ListView.builder(
                 padding: EdgeInsets.zero,
-                itemCount: recentPeers.length,
+                itemCount: _peers.length,
                 itemBuilder: (context, i) => _PeerRow(
-                  peer: recentPeers[i],
-                  isLast: i == recentPeers.length - 1,
-                  onTap: () => widget.onConnect(recentPeers[i]),
+                  peer: _peers[i],
+                  isLast: i == _peers.length - 1,
+                  onTap: () => widget.onConnect(_peers[i]),
                 ),
               ),
             ),
@@ -432,7 +460,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             Text(
-              '${recentPeers.length} ENTRIES',
+              '${_peers.length} ENTRIES',
               style: GDtype.mono(size: 9, weight: FontWeight.w700, color: t.subtle, letterSpacing: 0.5),
             ),
           ],

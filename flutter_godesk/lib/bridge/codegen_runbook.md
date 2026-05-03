@@ -19,9 +19,22 @@ Phase 2.4 final step: generate Dart FFI bindings from upstream
    git clone https://github.com/microsoft/vcpkg.git client/vcpkg
    client/vcpkg/bootstrap-vcpkg.bat -disableMetrics
    $env:VCPKG_ROOT = "D:\Vibecoding\GoDesk\client\vcpkg"
-   .\vcpkg.exe install libvpx:x64-windows-static libyuv:x64-windows-static `
-                       opus:x64-windows-static aom:x64-windows-static
+   $env:VCPKG_DEFAULT_TRIPLET = "x64-windows-static"   # CRITICAL — see below
+   cd client
+   .\vcpkg\vcpkg.exe install                           # reads vcpkg.json manifest
    ```
+
+   **Manifest-mode gotcha:** `client/vcpkg.json` is from upstream RustDesk
+   and includes 22 ports (aom, libjpeg-turbo, opus, libvpx, libyuv,
+   mfx-dispatch, ffmpeg with amf/nvcodec/qsv features, etc). The overlay
+   ports under `./res/vcpkg/aom` are patched specifically for
+   `x64-windows-static`. If `VCPKG_DEFAULT_TRIPLET` is not set (or you pass
+   `--triplet` only on the command line, which manifest mode silently
+   ignores), vcpkg picks `x64-windows` (dynamic) and aom's CMake configure
+   fails with `AOM_ARCH_X86=0`.
+
+   Cold compile time: **1–3 hours** for all 22 ports (ffmpeg dominates).
+   Reserve a focused session.
 2. `flutter_rust_bridge_codegen` v1.80.1 installed:
    ```
    cargo install flutter_rust_bridge_codegen --version 1.80.1

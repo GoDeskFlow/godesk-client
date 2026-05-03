@@ -99,35 +99,6 @@ class _GoDeskShellState extends State<GoDeskShell> {
     return false;
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final t = Theme.of(context).extension<GoDeskTheme>()!;
-    return Scaffold(
-      backgroundColor: t.bg.darken(0.02),
-      body: Center(
-        child: Container(
-          width: 920,
-          height: 620,
-          decoration: BoxDecoration(
-            color: t.bg,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: t.chromeBorder),
-            boxShadow: const <BoxShadow>[
-              BoxShadow(color: Color(0x4D000000), spreadRadius: 1),
-              BoxShadow(color: Color(0x4D000000), offset: Offset(0, 24), blurRadius: 60),
-            ],
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: _onboarding ? _onboardingShell(t) : _normalShell(t),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-extension _GoDeskShellPrivate on _GoDeskShellState {
   Widget _onboardingShell(GoDeskTheme t) {
     return Column(
       children: <Widget>[
@@ -174,6 +145,18 @@ extension _GoDeskShellPrivate on _GoDeskShellState {
       SkeuoTab.files => const FilesScreen(),
       SkeuoTab.settings => const SettingsScreen(),
     };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).extension<GoDeskTheme>()!;
+    // Phase 2.3 final: frameless window — SkeuoChrome IS the OS chrome.
+    // UI fills the entire window; size is constrained at the OS level
+    // via window_manager.minimumSize instead of an inner fixed Container.
+    return Scaffold(
+      backgroundColor: t.bg,
+      body: _onboarding ? _onboardingShell(t) : _normalShell(t),
+    );
   }
 }
 

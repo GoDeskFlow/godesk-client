@@ -5,6 +5,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../bridge/bridge.dart';
+import '../bridge/provider.dart';
 import '../theme/godesk_theme.dart';
 import '../theme/typography.dart';
 import '../util/a11y.dart';
@@ -34,7 +36,7 @@ class _ConnectingOverlayState extends State<ConnectingOverlay>
     'Connected',
   ];
   int _stage = 0;
-  Timer? _t;
+  StreamSubscription<ConnectEvent>? _sub;
   late final AnimationController _pulse;
 
   @override
@@ -42,26 +44,41 @@ class _ConnectingOverlayState extends State<ConnectingOverlay>
     super.initState();
     _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 1600))
       ..repeat();
-    _scheduleAdvance();
   }
 
-  void _scheduleAdvance() {
-    _t?.cancel();
-    if (_stage >= _stages.length - 1) {
-      _t = Timer(const Duration(milliseconds: 700), widget.onComplete);
-      return;
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _sub ??= BridgeProvider.of(context).connectEvents().listen(_onEvent);
+    // Trigger the bridge to start the connect flow once.
+    if (!_started) {
+      _started = true;
+      BridgeProvider.of(context).connect(widget.peerId);
     }
-    final dur = _stage == 0 ? 700 : _stage == 1 ? 1100 : 600;
-    _t = Timer(Duration(milliseconds: dur), () {
-      if (!mounted) return;
-      setState(() => _stage += 1);
-      _scheduleAdvance();
-    });
+  }
+
+  bool _started = false;
+
+  void _onEvent(ConnectEvent e) {
+    if (!mounted) return;
+    final newStage = switch (e.stage) {
+      ConnectStage.resolving => 0,
+      ConnectStage.tunnel => 1,
+      ConnectStage.authenticating => 2,
+      ConnectStage.connected => 3,
+      ConnectStage.failed => _stage,
+    };
+    setState(() => _stage = newStage);
+    if (e.stage == ConnectStage.connected) {
+      Future<void>.delayed(const Duration(milliseconds: 700), () {
+        if (mounted) widget.onComplete();
+      });
+    }
   }
 
   @override
   void dispose() {
-    _t?.cancel();
+    _sub?.cancel();
     _pulse.dispose();
     super.dispose();
   }
@@ -89,6 +106,7 @@ class _ConnectingOverlayState extends State<ConnectingOverlay>
                   }
                   return Stack(
                     alignment: Alignment.center,
+                    clipBehavior: Clip.none,
                     children: <Widget>[
                       _PulseRing(progress: _pulse.value, color: t.accent, baseRadius: 30),
                       _PulseRing(progress: ((_pulse.value + 0.3) % 1.0), color: t.accent, baseRadius: 18),

@@ -3,6 +3,8 @@
 
 import 'package:flutter/material.dart';
 
+import '../bridge/bridge.dart';
+import '../bridge/provider.dart';
 import '../data/transfers.dart';
 import '../kit/_internal/inset_painter.dart';
 import '../kit/lcd_panel.dart';
@@ -23,29 +25,19 @@ class FilesScreen extends StatefulWidget {
 }
 
 class _FilesScreenState extends State<FilesScreen> {
-  final TransferController _controller = TransferController();
-
   static const int _peakSpeed = 25000000;
 
-  @override
-  void initState() {
-    super.initState();
-    _controller.start();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
+  Bridge get _bridge => BridgeProvider.of(context);
 
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).extension<GoDeskTheme>()!;
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, _) {
-        final active = _controller.queue.where((q) => !q.done && !q.queued).toList();
+    return StreamBuilder<List<TransferItem>>(
+      stream: _bridge.transfers(),
+      initialData: const <TransferItem>[],
+      builder: (context, snap) {
+        final queue = snap.data ?? const <TransferItem>[];
+        final active = queue.where((q) => !q.done && !q.queued).toList();
         final sendSpeed = active.where((q) => q.dir == TransferDir.send).fold<int>(0, (s, q) => s + q.speed);
         final recvSpeed = active.where((q) => q.dir == TransferDir.receive).fold<int>(0, (s, q) => s + q.speed);
         final totalSpeed = sendSpeed + recvSpeed;
@@ -71,7 +63,7 @@ class _FilesScreenState extends State<FilesScreen> {
                   ),
                 ),
                 const SizedBox(width: 14),
-                Expanded(child: _rightColumn(t)),
+                Expanded(child: _rightColumn(t, queue)),
               ],
             ),
           ),
@@ -197,8 +189,8 @@ class _FilesScreenState extends State<FilesScreen> {
     );
   }
 
-  Widget _rightColumn(GoDeskTheme t) {
-    final activeCount = _controller.queue.where((q) => !q.done).length;
+  Widget _rightColumn(GoDeskTheme t, List<TransferItem> queue) {
+    final activeCount = queue.where((q) => !q.done).length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
@@ -242,10 +234,10 @@ class _FilesScreenState extends State<FilesScreen> {
                   Expanded(
                     child: ListView.builder(
                       padding: EdgeInsets.zero,
-                      itemCount: _controller.queue.length,
+                      itemCount: queue.length,
                       itemBuilder: (context, i) => _TransferRow(
-                        item: _controller.queue[i],
-                        isLast: i == _controller.queue.length - 1,
+                        item: queue[i],
+                        isLast: i == queue.length - 1,
                       ),
                     ),
                   ),

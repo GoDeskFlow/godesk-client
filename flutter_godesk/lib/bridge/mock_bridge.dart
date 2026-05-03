@@ -12,26 +12,37 @@ import 'bridge.dart';
 
 class MockBridge implements Bridge {
   MockBridge() {
-    _peers.add(List<Peer>.unmodifiable(recentPeers));
-    _diagnostics.add(const Diagnostics(
-      relay: 'eu-west-1',
-      cipher: 'AES-256-GCM',
-      latencyMs: 12,
-      natType: 'Symmetric',
-    ));
     _queue = initialQueue();
-    _transfers.add(List<TransferItem>.unmodifiable(_queue));
+    _peers = StreamController<List<Peer>>.broadcast(
+      onListen: () => _peers.add(_peersValue),
+    );
+    _diagnostics = StreamController<Diagnostics>.broadcast(
+      onListen: () => _diagnostics.add(_diagnosticsValue),
+    );
+    _transfers = StreamController<List<TransferItem>>.broadcast(
+      onListen: () => _transfers.add(List<TransferItem>.unmodifiable(_queue)),
+    );
     _ticker = Timer.periodic(const Duration(milliseconds: 400), (_) => _tick());
   }
 
   String _password = initialPassword;
   late List<TransferItem> _queue;
 
+  // Last-known snapshots — re-emitted to each new subscriber on attach
+  // (broadcast streams otherwise miss late subscribers).
+  final List<Peer> _peersValue = List<Peer>.unmodifiable(recentPeers);
+  static const Diagnostics _diagnosticsValue = Diagnostics(
+    relay: 'eu-west-1',
+    cipher: 'AES-256-GCM',
+    latencyMs: 12,
+    natType: 'Symmetric',
+  );
+
   late final Timer _ticker;
-  final StreamController<List<Peer>> _peers = StreamController<List<Peer>>.broadcast();
-  final StreamController<Diagnostics> _diagnostics = StreamController<Diagnostics>.broadcast();
+  late final StreamController<List<Peer>> _peers;
+  late final StreamController<Diagnostics> _diagnostics;
   final StreamController<ConnectEvent> _connectEvents = StreamController<ConnectEvent>.broadcast();
-  final StreamController<List<TransferItem>> _transfers = StreamController<List<TransferItem>>.broadcast();
+  late final StreamController<List<TransferItem>> _transfers;
 
   void _tick() {
     var changed = false;
