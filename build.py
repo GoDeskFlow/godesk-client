@@ -1,3 +1,4 @@
+# GODESK_PATCH_APPLIED v1
 #!/usr/bin/env python3
 
 import os
@@ -22,7 +23,8 @@ elif osx:
     flutter_build_dir = 'build/macos/Build/Products/Release/'
 else:
     flutter_build_dir = 'build/linux/x64/release/bundle/'
-flutter_build_dir_2 = f'flutter/{flutter_build_dir}'
+FLUTTER_DIR = 'flutter_godesk'  # GODESK_PATCH: overridden by --flutter-dir at runtime
+flutter_build_dir_2 = f'{FLUTTER_DIR}/{flutter_build_dir}'
 skip_cargo = False
 
 
@@ -108,6 +110,9 @@ def make_parser():
              'Available: [Not used for now]. Special value is "ALL" and empty "". Default is empty.')
     parser.add_argument('--flutter', action='store_true',
                         help='Build flutter package', default=False)
+    parser.add_argument('--flutter-dir',
+                        help="Flutter package directory (GoDesk overlay: 'flutter_godesk')",
+                        default='flutter_godesk')
     parser.add_argument(
         '--hwcodec',
         action='store_true',
@@ -174,7 +179,7 @@ def generate_build_script_for_docker():
             pushd /tmp && git clone https://github.com/SoLongAndThanksForAllThePizza/flutter_rust_bridge --depth=1 && popd
             pushd /tmp/flutter_rust_bridge/frb_codegen && cargo install --path . && popd
             pushd flutter && flutter pub get && popd
-            ~/.cargo/bin/flutter_rust_bridge_codegen --rust-input ./src/flutter_ffi.rs --dart-output ./flutter/lib/generated_bridge.dart
+            ~/.cargo/bin/flutter_rust_bridge_codegen --rust-input ./src/flutter_ffi.rs --dart-output ./' + FLUTTER_DIR + '/lib/generated_bridge.dart
             # install vcpkg
             pushd /opt
             export VCPKG_ROOT=`pwd`/vcpkg
@@ -312,14 +317,14 @@ Description: A remote control software.
 def ffi_bindgen_function_refactor():
     # workaround ffigen
     system2(
-        'sed -i "s/ffi.NativeFunction<ffi.Bool Function(DartPort/ffi.NativeFunction<ffi.Uint8 Function(DartPort/g" flutter/lib/generated_bridge.dart')
+        'sed -i "s/ffi.NativeFunction<ffi.Bool Function(DartPort/ffi.NativeFunction<ffi.Uint8 Function(DartPort/g" {FLUTTER_DIR}/lib/generated_bridge.dart')
 
 
 def build_flutter_deb(version, features):
     if not skip_cargo:
         system2(f'cargo build --features {features} --lib --release')
         ffi_bindgen_function_refactor()
-    os.chdir('flutter')
+    os.chdir(FLUTTER_DIR)
     system2('flutter build linux --release')
     system2('mkdir -p tmpdeb/usr/bin/')
     system2('mkdir -p tmpdeb/usr/share/rustdesk')
@@ -365,7 +370,7 @@ def build_flutter_deb(version, features):
 
 
 def build_deb_from_folder(version, binary_folder):
-    os.chdir('flutter')
+    os.chdir(FLUTTER_DIR)
     system2('mkdir -p tmpdeb/usr/bin/')
     system2('mkdir -p tmpdeb/usr/share/rustdesk')
     system2('mkdir -p tmpdeb/usr/share/rustdesk/files/systemd/')
@@ -409,7 +414,7 @@ def build_flutter_dmg(version, features):
     # copy dylib
     system2(
         "cp target/release/liblibrustdesk.dylib target/release/librustdesk.dylib")
-    os.chdir('flutter')
+    os.chdir(FLUTTER_DIR)
     system2('flutter build macos --release')
     system2('cp -rf ../target/release/service ./build/macos/Build/Products/Release/RustDesk.app/Contents/MacOS/')
     '''
@@ -424,7 +429,7 @@ def build_flutter_arch_manjaro(version, features):
     if not skip_cargo:
         system2(f'cargo build --features {features} --lib --release')
     ffi_bindgen_function_refactor()
-    os.chdir('flutter')
+    os.chdir(FLUTTER_DIR)
     system2('flutter build linux --release')
     system2(f'strip {flutter_build_dir}/lib/librustdesk.so')
     os.chdir('../res')
@@ -437,7 +442,7 @@ def build_flutter_windows(version, features, skip_portable_pack):
         if not os.path.exists("target/release/librustdesk.dll"):
             print("cargo build failed, please check rust source code.")
             exit(-1)
-    os.chdir('flutter')
+    os.chdir(FLUTTER_DIR)
     system2('flutter build windows --release')
     os.chdir('..')
     shutil.copy2('target/release/deps/dylib_virtual_display.dll',
@@ -466,6 +471,11 @@ def main():
     global skip_cargo
     parser = make_parser()
     args = parser.parse_args()
+    global FLUTTER_DIR
+    if getattr(args, 'flutter_dir', None):
+        FLUTTER_DIR = args.flutter_dir
+        global flutter_build_dir_2
+        flutter_build_dir_2 = f'{FLUTTER_DIR}/{flutter_build_dir}'
 
     if os.path.exists(exe_path):
         os.unlink(exe_path)
