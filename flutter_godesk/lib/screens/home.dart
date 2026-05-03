@@ -1,6 +1,8 @@
 // Home screen — Your ID, OTP, Diagnostics, Remote-Control input, Address Book.
 // Port of godesk-skeuo-home.jsx.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -30,6 +32,8 @@ class _HomeScreenState extends State<HomeScreen> {
   String _password = '';
   Identity? _identity;
   List<Peer> _peers = const <Peer>[];
+  Diagnostics? _diagnostics;
+  StreamSubscription<Diagnostics>? _diagSub;
   bool _showPw = false;
   bool _copiedId = false;
   bool _copiedPw = false;
@@ -45,6 +49,16 @@ class _HomeScreenState extends State<HomeScreen> {
     _bridge.oneTimePassword().then((p) {
       if (mounted) setState(() => _password = p);
     });
+    _diagSub ??= _bridge.diagnostics().listen((d) {
+      if (mounted) setState(() => _diagnostics = d);
+    });
+  }
+
+  @override
+  void dispose() {
+    _peerInput.dispose();
+    _diagSub?.cancel();
+    super.dispose();
   }
 
   void _copyId() {
@@ -82,11 +96,7 @@ class _HomeScreenState extends State<HomeScreen> {
     widget.onConnect(peer);
   }
 
-  @override
-  void dispose() {
-    _peerInput.dispose();
-    super.dispose();
-  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -236,11 +246,12 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   List<Widget> _diagRows(GoDeskTheme t) {
+    final d = _diagnostics;
     final rows = <(String, String, bool)>[
-      ('Relay', 'eu-west-1', true),
-      ('Encryption', 'AES-256-GCM', true),
-      ('Latency', '12 ms', true),
-      ('NAT', 'Symmetric', false),
+      ('Relay', d?.relay ?? '—', d?.relay != null && d!.relay != '—'),
+      ('Encryption', d?.cipher ?? 'AES-256-GCM', true),
+      ('Latency', (d?.latencyMs ?? 0) > 0 ? '${d!.latencyMs} ms' : '—', (d?.latencyMs ?? 0) > 0),
+      ('NAT', d?.natType ?? 'Unknown', d?.natType == 'Open' || d?.natType == 'Cone'),
     ];
     return <Widget>[
       for (var i = 0; i < rows.length; i++)
@@ -424,15 +435,17 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             Expanded(
-              child: ListView.builder(
-                padding: EdgeInsets.zero,
-                itemCount: _peers.length,
-                itemBuilder: (context, i) => _PeerRow(
-                  peer: _peers[i],
-                  isLast: i == _peers.length - 1,
-                  onTap: () => widget.onConnect(_peers[i]),
-                ),
-              ),
+              child: _peers.isEmpty
+                  ? _AddressBookEmpty(theme: t)
+                  : ListView.builder(
+                      padding: EdgeInsets.zero,
+                      itemCount: _peers.length,
+                      itemBuilder: (context, i) => _PeerRow(
+                        peer: _peers[i],
+                        isLast: i == _peers.length - 1,
+                        onTap: () => widget.onConnect(_peers[i]),
+                      ),
+                    ),
             ),
           ],
         ),
@@ -625,3 +638,35 @@ class _TagPlate extends StatelessWidget {
     );
   }
 }
+
+class _AddressBookEmpty extends StatelessWidget {
+  const _AddressBookEmpty({required this.theme});
+  final GoDeskTheme theme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            Icon(Icons.contact_phone_outlined, size: 32, color: theme.subtle.withValues(alpha: 0.5)),
+            const SizedBox(height: 10),
+            Text(
+              "No saved peers yet",
+              style: GDtype.ui(size: 12, weight: FontWeight.w600, color: theme.body),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              "Connect to a remote machine using its 9-digit ID and it will appear here.",
+              textAlign: TextAlign.center,
+              style: GDtype.ui(size: 10, color: theme.subtle).copyWith(height: 1.4),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+

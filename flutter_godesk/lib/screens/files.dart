@@ -232,14 +232,16 @@ class _FilesScreenState extends State<FilesScreen> {
                     ),
                   ),
                   Expanded(
-                    child: ListView.builder(
-                      padding: EdgeInsets.zero,
-                      itemCount: queue.length,
-                      itemBuilder: (context, i) => _TransferRow(
-                        item: queue[i],
-                        isLast: i == queue.length - 1,
-                      ),
-                    ),
+                    child: queue.isEmpty
+                        ? _TransferQueueEmpty(theme: t)
+                        : ListView.builder(
+                            padding: EdgeInsets.zero,
+                            itemCount: queue.length,
+                            itemBuilder: (context, i) => _TransferRow(
+                              item: queue[i],
+                              isLast: i == queue.length - 1,
+                            ),
+                          ),
                   ),
                 ],
               ),
@@ -557,6 +559,37 @@ class _CancelChip extends StatelessWidget {
         border: Border.all(color: t.border),
       ),
       child: Icon(Icons.close, size: 12, color: t.body),
+    );
+  }
+}
+
+class _TransferQueueEmpty extends StatelessWidget {
+  const _TransferQueueEmpty({required this.theme});
+  final GoDeskTheme theme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            Icon(Icons.folder_open_outlined, size: 32, color: theme.subtle.withValues(alpha: 0.5)),
+            const SizedBox(height: 10),
+            Text(
+              'No active transfers',
+              style: GDtype.ui(size: 12, weight: FontWeight.w600, color: theme.body),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Drag files into the window during an active session, or use ADD FILES on the left.',
+              textAlign: TextAlign.center,
+              style: GDtype.ui(size: 10, color: theme.subtle).copyWith(height: 1.4),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

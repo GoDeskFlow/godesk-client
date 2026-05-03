@@ -5,6 +5,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../bridge/bridge.dart';
+import '../bridge/provider.dart';
 import '../chrome/skeuo_chrome.dart';
 import '../data/peers.dart';
 import '../kit/status_led.dart';
@@ -176,13 +178,27 @@ class _Footer extends StatelessWidget {
       ),
       child: Row(
         children: <Widget>[
-          const StatusLED(color: LEDColors.online, pulse: true, size: 6),
-          const SizedBox(width: 8),
-          Text('RELAY EU-WEST-1',
-              style: GDtype.mono(size: 9, weight: FontWeight.w700, color: t.subtle, letterSpacing: 0.5)),
-          const SizedBox(width: 6),
-          Text('· P2P · 12ms · AES-256',
-              style: GDtype.mono(size: 9, color: t.subtle, letterSpacing: 0.5)),
+          // Footer status reflects bridge.diagnostics() — `NOT CONNECTED`
+          // when no session is active (empty MockBridge first-run state).
+          StreamBuilder<Diagnostics>(
+            stream: BridgeProvider.of(context).diagnostics(),
+            builder: (context, snap) {
+              final d = snap.data;
+              final hasRelay = d != null && d.relay != '—';
+              final hasLatency = d != null && d.latencyMs > 0;
+              return Row(mainAxisSize: MainAxisSize.min, children: <Widget>[
+                StatusLED(color: hasRelay ? LEDColors.online : LEDColors.offline, pulse: hasRelay, size: 6),
+                const SizedBox(width: 8),
+                Text(hasRelay ? 'RELAY ${d.relay.toUpperCase()}' : 'NOT CONNECTED',
+                    style: GDtype.mono(size: 9, weight: FontWeight.w700, color: t.subtle, letterSpacing: 0.5)),
+                if (hasLatency) ...<Widget>[
+                  const SizedBox(width: 6),
+                  Text('· P2P · ${d.latencyMs}ms · ${d.cipher.replaceAll('-GCM', '')}',
+                      style: GDtype.mono(size: 9, color: t.subtle, letterSpacing: 0.5)),
+                ],
+              ]);
+            },
+          ),
           const Spacer(),
           SizedBox(
             height: 18,
