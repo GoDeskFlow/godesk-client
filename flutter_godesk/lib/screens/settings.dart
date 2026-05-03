@@ -405,7 +405,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _about(GoDeskTheme t) {
     final rows = <(String, String)>[
-      ('Version', '0.1.0 (build 26.05.03)'),
+      ('Version', '${GoDeskInfra.appVersion} (build ${GoDeskInfra.buildStamp})'),
       ('License', '${GoDeskInfra.licenseSpdx} · open source'),
       ('Forked from', GoDeskInfra.upstream),
       ('Platform', 'Windows 11 · x64'),

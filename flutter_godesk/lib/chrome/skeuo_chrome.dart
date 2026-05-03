@@ -32,61 +32,79 @@ class SkeuoChrome extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).extension<GoDeskTheme>()!;
-    return DragToMoveArea(
-      child: Container(
-        height: 44,
-        padding: const EdgeInsets.symmetric(horizontal: 10),
-        decoration: BoxDecoration(
-          gradient: t.chromeGradient,
-          border: Border(bottom: BorderSide(color: t.chromeBorder)),
-        ),
-        child: Stack(
+    // Layered structure: the DragToMoveArea fills the chrome behind everything,
+    // and interactive widgets (traffic lights, tab buttons) sit above it via a
+    // Stack. Their inner GestureDetectors win the hit-test for taps; empty
+    // space between/around them falls through to DragToMoveArea so the user
+    // can drag the window from blank chrome regions.
+    //
+    // Earlier version wrapped the entire chrome in DragToMoveArea, which
+    // intercepted pointer-down events before the inner GestureDetectors could
+    // claim them on Windows — clicks on the tab buttons (and traffic lights)
+    // silently became drag-starts, so tabs never switched.
+    return SizedBox(
+      height: 44,
+      child: Stack(
         children: <Widget>[
-          // Brushed-metal vertical stripes overlay.
+          // Layer 1 — drag region fills the chrome.
           Positioned.fill(
-            child: IgnorePointer(
-              child: DecoratedBox(decoration: BoxDecoration(gradient: t.brushedStripes)),
-            ),
-          ),
-          Row(
-            children: <Widget>[
-              const _TrafficLights(),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Center(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      const SkeuoLogo(),
-                      const SizedBox(width: 7),
-                      Text(
-                        'GoDesk',
-                        style: GDtype.wordmark(
-                          size: 12,
-                          color: t.heading,
-                          trackingEm: 0.08,
-                        ).copyWith(
-                          shadows: <Shadow>[
-                            Shadow(
-                              color: t.dark
-                                  ? const Color(0x99000000)
-                                  : const Color(0xB3FFFFFF),
-                              offset: const Offset(0, 1),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-                      _ScreenTabs(current: current, onTab: onTab),
-                    ],
+            child: DragToMoveArea(
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: t.chromeGradient,
+                  border: Border(bottom: BorderSide(color: t.chromeBorder)),
+                ),
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(gradient: t.brushedStripes),
                   ),
                 ),
               ),
-              _SerialPlate(serial: serial, theme: t),
-            ],
+            ),
+          ),
+          // Layer 2 — interactive controls. Padding/Row/Center/Expanded don't
+          // intercept clicks themselves, so blank gaps fall through to drag.
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Row(
+              children: <Widget>[
+                const _TrafficLights(),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Center(
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        const SkeuoLogo(),
+                        const SizedBox(width: 7),
+                        Text(
+                          'GoDesk',
+                          style: GDtype.wordmark(
+                            size: 12,
+                            color: t.heading,
+                            trackingEm: 0.08,
+                          ).copyWith(
+                            shadows: <Shadow>[
+                              Shadow(
+                                color: t.dark
+                                    ? const Color(0x99000000)
+                                    : const Color(0xB3FFFFFF),
+                                offset: const Offset(0, 1),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        _ScreenTabs(current: current, onTab: onTab),
+                      ],
+                    ),
+                  ),
+                ),
+                _SerialPlate(serial: serial, theme: t),
+              ],
+            ),
           ),
         ],
-      ),
       ),
     );
   }

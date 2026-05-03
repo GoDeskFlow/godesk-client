@@ -98,8 +98,18 @@ class _VUPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final pivot = Offset(size.width / 2, size.height + 10);
-    const radius = 60.0;
+    // JSX reference (godesk-skeuo-files.jsx) places the SVG with viewBox
+    // 100×56 inside a 110×80 container at top:6. The needle and the pivot
+    // circle both anchor at viewBox (50, 50) — so in container pixels the
+    // pivot lives at (~width/2, ~56) and the needle radius is 36.
+    //
+    // Earlier port placed the pivot at (width/2, height+10) — i.e. 10 px
+    // BELOW the visible box bottom — while drawing the pivot dot at
+    // (width/2, height-4) inside the box. That left a 14 px gap between
+    // the visible base of the needle and the dot the user expects it to
+    // emerge from. Aligning both to the same point fixes it.
+    final pivot = Offset(size.width / 2, size.height * 0.7);
+    const radius = 42.0;
 
     // Arc (whole sweep) — dim color.
     final arcRect = Rect.fromCircle(center: pivot, radius: radius);
@@ -109,10 +119,10 @@ class _VUPainter extends CustomPainter {
       ..style = PaintingStyle.stroke;
     canvas.drawArc(arcRect, math.pi + math.pi / 4, math.pi / 2, false, arcPaint);
 
-    // Warning zone — right third.
+    // Warning zone — right third of the sweep.
     final warnPaint = Paint()
       ..color = warning.withValues(alpha: 0.7)
-      ..strokeWidth = 1.5
+      ..strokeWidth = 2.0
       ..style = PaintingStyle.stroke;
     canvas.drawArc(
       arcRect,
@@ -122,7 +132,7 @@ class _VUPainter extends CustomPainter {
       warnPaint,
     );
 
-    // Tick marks.
+    // Tick marks just outside the arc.
     final tickPaint = Paint()
       ..color = dim
       ..strokeWidth = 1
@@ -130,14 +140,14 @@ class _VUPainter extends CustomPainter {
     for (var i = 0; i <= 10; i++) {
       final t = i / 10.0;
       final a = math.pi + math.pi / 4 + (math.pi / 2) * t;
-      final p1 = pivot + Offset(math.cos(a), math.sin(a)) * (radius - 4);
-      final p2 = pivot + Offset(math.cos(a), math.sin(a)) * radius;
+      final p1 = pivot + Offset(math.cos(a), math.sin(a)) * radius;
+      final p2 = pivot + Offset(math.cos(a), math.sin(a)) * (radius + 3);
       canvas.drawLine(p1, p2, tickPaint);
     }
 
-    // Needle with glow.
+    // Needle with glow — starts AT pivot, length ~36.
     final na = math.pi + math.pi / 4 + (math.pi / 2) * value;
-    final nEnd = pivot + Offset(math.cos(na), math.sin(na)) * (radius - 6);
+    final nEnd = pivot + Offset(math.cos(na), math.sin(na)) * 36.0;
     final glowPaint = Paint()
       ..color = needle.withValues(alpha: 0.6)
       ..strokeWidth = 4
@@ -151,9 +161,8 @@ class _VUPainter extends CustomPainter {
       ..strokeCap = StrokeCap.round;
     canvas.drawLine(pivot, nEnd, needlePaint);
 
-    // Pivot dot.
-    final pivotPaint = Paint()..color = ink;
-    canvas.drawCircle(Offset(size.width / 2, size.height - 4), 3, pivotPaint);
+    // Pivot dot — same coordinate as needle origin.
+    canvas.drawCircle(pivot, 3, Paint()..color = ink);
   }
 
   @override

@@ -10,8 +10,10 @@ import '../bridge/bridge.dart';
 import '../bridge/provider.dart';
 import '../data/peers.dart';
 import '../kit/_internal/inset_painter.dart';
+import '../kit/dashed_divider.dart';
 import '../kit/lcd_panel.dart';
 import '../kit/metal_panel.dart';
+import '../kit/os_glyph.dart';
 import '../kit/section_label.dart';
 import '../kit/status_led.dart';
 import '../kit/tactile_button.dart';
@@ -39,6 +41,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _copiedId = false;
   bool _copiedPw = false;
   bool _copiedInvite = false;
+  ConnectMode _mode = ConnectMode.fullControl;
 
   Bridge get _bridge => BridgeProvider.of(context);
 
@@ -191,6 +194,9 @@ class _HomeScreenState extends State<HomeScreen> {
             status: PeerStatus.online,
           ),
         )!;
+    // Persist the chosen mode as a per-peer option so RealBridge can read it
+    // when launching the session.
+    _bridge.setPeerOption(peer.id, 'mode', _mode.wireValue);
     widget.onConnect(peer);
   }
 
@@ -370,14 +376,9 @@ class _HomeScreenState extends State<HomeScreen> {
       ('NAT', d?.natType ?? 'Unknown', d?.natType == 'Open' || d?.natType == 'Cone'),
     ];
     return <Widget>[
-      for (var i = 0; i < rows.length; i++)
-        Container(
+      for (var i = 0; i < rows.length; i++) ...<Widget>[
+        Padding(
           padding: const EdgeInsets.symmetric(vertical: 4),
-          decoration: BoxDecoration(
-            border: i < rows.length - 1
-                ? Border(bottom: BorderSide(color: t.border, style: BorderStyle.solid, width: 0.5))
-                : null,
-          ),
           child: Row(
             children: <Widget>[
               Expanded(
@@ -397,6 +398,8 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
+        if (i < rows.length - 1) const DashedDivider(height: 1),
+      ],
     ];
   }
 
@@ -465,11 +468,11 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 10),
               Row(
                 children: <Widget>[
-                  _modeChip(t, 'View only', false),
+                  _modeChip(t, 'View only', ConnectMode.viewOnly),
                   const SizedBox(width: 6),
-                  _modeChip(t, 'Full control', true),
+                  _modeChip(t, 'Full control', ConnectMode.fullControl),
                   const SizedBox(width: 6),
-                  _modeChip(t, 'File transfer', false),
+                  _modeChip(t, 'File transfer', ConnectMode.fileTransfer),
                 ],
               ),
             ],
@@ -482,30 +485,38 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _modeChip(GoDeskTheme t, String label, bool active) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        gradient: active
-            ? LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: <Color>[t.accent.withValues(alpha: 0.2), t.accent.withValues(alpha: 0.1)],
-              )
-            : LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: <Color>[t.panelHi, t.panel],
-              ),
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: active ? t.accentDark : t.border),
-      ),
-      child: Text(
-        label.toUpperCase(),
-        style: GDtype.wordmark(
-          size: 10,
-          color: active ? t.accentDark : t.body,
-          trackingEm: 0.06,
+  Widget _modeChip(GoDeskTheme t, String label, ConnectMode mode) {
+    final active = _mode == mode;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() => _mode = mode),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            gradient: active
+                ? LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: <Color>[t.accent.withValues(alpha: 0.2), t.accent.withValues(alpha: 0.1)],
+                  )
+                : LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: <Color>[t.panelHi, t.panel],
+                  ),
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: active ? t.accentDark : t.border),
+          ),
+          child: Text(
+            label.toUpperCase(),
+            style: GDtype.wordmark(
+              size: 10,
+              color: active ? t.accentDark : t.body,
+              trackingEm: 0.06,
+            ),
+          ),
         ),
       ),
     );
@@ -700,76 +711,88 @@ class _PeerRowState extends State<_PeerRow> {
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
       cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: widget.onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-          decoration: BoxDecoration(
-            color: _hovered
-                ? t.accent.withValues(alpha: t.dark ? 0.13 : 0.06)
-                : Colors.transparent,
-            border: widget.isLast
-                ? null
-                : Border(bottom: BorderSide(color: t.border, width: 0.5)),
-          ),
-          child: Row(
-            children: <Widget>[
-              _OSTile(peer: widget.peer),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Row(
+      child: Stack(
+        children: <Widget>[
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: widget.onTap,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              color: _hovered
+                  ? t.accent.withValues(alpha: t.dark ? 0.13 : 0.06)
+                  : Colors.transparent,
+              child: Row(
+                children: <Widget>[
+                  _OSTile(peer: widget.peer),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
-                        Flexible(
-                          child: Text(widget.peer.displayName,
-                              overflow: TextOverflow.ellipsis,
-                              style: GDtype.ui(size: 12, weight: FontWeight.w700, color: t.heading)),
+                        Row(
+                          children: <Widget>[
+                            Flexible(
+                              child: Text(widget.peer.displayName,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: GDtype.ui(size: 12, weight: FontWeight.w700, color: t.heading)),
+                            ),
+                            if (hasAlias) ...<Widget>[
+                              const SizedBox(width: 6),
+                              Icon(Icons.edit, size: 10, color: t.subtle),
+                            ],
+                          ],
                         ),
-                        if (hasAlias) ...<Widget>[
-                          const SizedBox(width: 6),
-                          Icon(Icons.edit, size: 10, color: t.subtle),
-                        ],
+                        const SizedBox(height: 1),
+                        Text(
+                          hasAlias ? '${widget.peer.name} · ${widget.peer.id}' : widget.peer.id,
+                          style: GDtype.mono(size: 10, color: t.subtle),
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ],
                     ),
-                    const SizedBox(height: 1),
-                    Text(
-                      hasAlias ? '${widget.peer.name} · ${widget.peer.id}' : widget.peer.id,
+                  ),
+                  const SizedBox(width: 10),
+                  _TagPlate(tag: widget.peer.tag),
+                  const SizedBox(width: 10),
+                  SizedBox(
+                    width: 80,
+                    child: Text(
+                      widget.peer.lastSeen,
+                      textAlign: TextAlign.right,
                       style: GDtype.mono(size: 10, color: t.subtle),
-                      overflow: TextOverflow.ellipsis,
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 10),
-              _TagPlate(tag: widget.peer.tag),
-              const SizedBox(width: 10),
-              SizedBox(
-                width: 80,
-                child: Text(
-                  widget.peer.lastSeen,
-                  textAlign: TextAlign.right,
-                  style: GDtype.mono(size: 10, color: t.subtle),
-                ),
-              ),
-              const SizedBox(width: 6),
-              SizedBox(
-                width: 22,
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 120),
-                  opacity: _hovered ? 1 : 0,
+            ),
+          ),
+          // Dashed divider — drawn at the bottom of the row, on top of the
+          // tap layer so it remains visible while the row is hovered.
+          if (!widget.isLast)
+            const Positioned(
+              left: 14, right: 14, bottom: 0,
+              child: IgnorePointer(child: DashedDivider(height: 1)),
+            ),
+          // Edit-pencil overlay — appears on hover, sits ABOVE the row's tap
+          // layer so its own GestureDetector wins. Placed at right margin
+          // (overlapping lastSeen text) instead of stealing a layout column.
+          Positioned(
+            right: 8,
+            top: 0,
+            bottom: 0,
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 120),
+              opacity: _hovered ? 1 : 0,
+              child: Center(
+                child: IgnorePointer(
+                  ignoring: !_hovered,
                   child: Tooltip(
                     message: 'Rename peer',
                     child: MouseRegion(
                       cursor: SystemMouseCursors.click,
                       child: GestureDetector(
                         behavior: HitTestBehavior.opaque,
-                        onTap: () {
-                          // Don't bubble to the row's onTap (which would connect).
-                          widget.onEditAlias();
-                        },
+                        onTap: widget.onEditAlias,
                         child: Container(
                           width: 22,
                           height: 22,
@@ -789,9 +812,9 @@ class _PeerRowState extends State<_PeerRow> {
                   ),
                 ),
               ),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -804,11 +827,6 @@ class _OSTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).extension<GoDeskTheme>()!;
-    final iconData = switch (peer.os) {
-      PeerOS.windows => Icons.window_outlined,
-      PeerOS.macos => Icons.apple,
-      PeerOS.linux => Icons.terminal_outlined,
-    };
     return Stack(
       clipBehavior: Clip.none,
       children: <Widget>[
@@ -824,7 +842,7 @@ class _OSTile extends StatelessWidget {
             borderRadius: BorderRadius.circular(5),
             border: Border.all(color: t.border),
           ),
-          child: Icon(iconData, size: 14, color: t.heading),
+          child: Center(child: OsGlyph(os: peer.os, size: 14, color: t.heading)),
         ),
         Positioned(
           right: -2,
@@ -883,6 +901,19 @@ class _TagPlate extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Connect-time intent — what the user wants to do with the remote.
+/// Maps to RustDesk session-arg conn-type. Persisted per-peer via
+/// `bridge.setPeerOption(id, 'mode', wireValue)` so the next connect to
+/// the same peer remembers the choice (RuDesktop 2.9.385 parity).
+enum ConnectMode {
+  viewOnly('view-only'),
+  fullControl('full-control'),
+  fileTransfer('file-transfer');
+
+  const ConnectMode(this.wireValue);
+  final String wireValue;
 }
 
 class _AddressBookEmpty extends StatelessWidget {

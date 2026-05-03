@@ -61,55 +61,52 @@ class _KnobState extends State<Knob> {
         child: SizedBox(
           width: 64,
           height: 64,
-          child: CustomPaint(
-            painter: _KnobPainter(theme: t),
-            child: Stack(
-              children: <Widget>[
-                // Mark — rotates around center.
-                Center(
-                  child: Transform.rotate(
-                    angle: angle,
-                    child: TweenAnimationBuilder<double>(
-                      tween: Tween<double>(begin: angle, end: angle),
-                      duration: const Duration(milliseconds: 200),
-                      curve: Curves.easeOut,
-                      builder: (context, _, __) => SizedBox(
-                        width: 64,
-                        height: 64,
-                        child: CustomPaint(
-                          painter: _MarkPainter(
-                            angleRad: angle,
-                            color: t.accent,
-                            glow: t.accentGlow,
-                          ),
-                        ),
-                      ),
+          child: Stack(
+            alignment: Alignment.center,
+            children: <Widget>[
+              // Body (radial gradient + tick marks, painted statically).
+              Positioned.fill(
+                child: CustomPaint(painter: _KnobPainter(theme: t)),
+              ),
+              // Mark — single rotation via AnimatedRotation. The painter draws
+              // the mark in its un-rotated position (anchored to the top of the
+              // 64×64 box) and AnimatedRotation spins it around the box centre.
+              // Earlier port double-rotated (Transform.rotate + canvas.rotate),
+              // which threw the mark off the dial.
+              Positioned.fill(
+                child: AnimatedRotation(
+                  turns: angle / (2 * math.pi),
+                  duration: const Duration(milliseconds: 180),
+                  curve: Curves.easeOut,
+                  child: CustomPaint(
+                    painter: _MarkPainter(
+                      color: t.accent,
+                      glow: t.accentGlow,
                     ),
                   ),
                 ),
-                // Center recess dot.
-                Center(
-                  child: Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: RadialGradient(
-                        colors: <Color>[t.bg, t.panel],
-                      ),
-                      boxShadow: <BoxShadow>[
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.4),
-                          offset: const Offset(0, 1),
-                          blurRadius: 2,
-                          spreadRadius: -1,
-                        ),
-                      ],
-                    ),
+              ),
+              // Center recess dot — sits ON TOP of the mark so the mark
+              // appears to emerge from the recess.
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: <Color>[t.bg, t.panel],
                   ),
+                  boxShadow: <BoxShadow>[
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.4),
+                      offset: const Offset(0, 1),
+                      blurRadius: 2,
+                      spreadRadius: -1,
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -170,45 +167,31 @@ class _KnobPainter extends CustomPainter {
   bool shouldRepaint(_KnobPainter old) => old.theme.dark != theme.dark;
 }
 
+/// Static mark painter — draws the indicator stripe at the TOP of the
+/// 64×64 box. Rotation is provided by the parent `AnimatedRotation`, which
+/// rotates around the box centre — so the mark sweeps cleanly along the
+/// dial's outer edge. JSX equivalent: a 3×16 stripe at top:4 with
+/// transformOrigin "50% 28px" (i.e. the parent box centre).
 class _MarkPainter extends CustomPainter {
-  const _MarkPainter({
-    required this.angleRad,
-    required this.color,
-    required this.glow,
-  });
-  final double angleRad;
+  const _MarkPainter({required this.color, required this.glow});
   final Color color;
   final Color glow;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final c = size.center(Offset.zero);
-    canvas.save();
-    canvas.translate(c.dx, c.dy);
-    canvas.rotate(angleRad);
+    // Mark anchored to the top of the box: 3px wide, 16px tall, top inset 4px.
+    final markRect = Rect.fromLTWH(size.width / 2 - 1.5, 4, 3, 16);
+    final rrect = RRect.fromRectAndRadius(markRect, const Radius.circular(1.5));
 
-    final glowPaint = Paint()
-      ..color = glow.withValues(alpha: 0.8)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
-    final markPaint = Paint()..color = color;
-
-    final markRect = Rect.fromCenter(
-      center: const Offset(0, -22),
-      width: 3,
-      height: 16,
-    );
     canvas.drawRRect(
-      RRect.fromRectAndRadius(markRect, const Radius.circular(1.5)),
-      glowPaint,
+      rrect,
+      Paint()
+        ..color = glow.withValues(alpha: 0.8)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3),
     );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(markRect, const Radius.circular(1.5)),
-      markPaint,
-    );
-
-    canvas.restore();
+    canvas.drawRRect(rrect, Paint()..color = color);
   }
 
   @override
-  bool shouldRepaint(_MarkPainter old) => old.angleRad != angleRad || old.color != color;
+  bool shouldRepaint(_MarkPainter old) => old.color != color || old.glow != glow;
 }

@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import '../bridge/bridge.dart';
 import '../bridge/provider.dart';
 import '../chrome/skeuo_chrome.dart';
+import '../config/infra.dart';
 import '../data/peers.dart';
 import '../kit/status_led.dart';
 import '../kit/tactile_button.dart';
@@ -210,7 +211,7 @@ class _Footer extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          Text('v0.1.0',
+          Text('v${GoDeskInfra.appVersion}',
               style: GDtype.mono(size: 9, color: t.subtle, letterSpacing: 0.5)),
         ],
       ),

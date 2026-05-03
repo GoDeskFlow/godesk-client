@@ -53,4 +53,14 @@ class GoDeskInfra {
   static const String bundleId = 'com.godesk.client';
   static const String licenseSpdx = 'AGPL-3.0-only';
   static const String upstream = 'github.com/rustdesk/rustdesk@v1.4.6';
+
+  /// Single source of truth for the displayed app version. Bumped alongside
+  /// the NSIS installer's `-DGODESK_VERSION=X.Y.Z` flag and `pubspec.yaml`'s
+  /// `version:` line. Read by Settings → About and the bottom-bar footer
+  /// instead of hardcoding `v0.1.0` in two places.
+  static const String appVersion = '0.1.5';
+
+  /// Compact build stamp — Y.MM.DD shown next to the version in About.
+  /// Update when cutting a new build.
+  static const String buildStamp = '26.05.03';
 }

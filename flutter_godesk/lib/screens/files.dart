@@ -8,6 +8,7 @@ import '../bridge/bridge.dart';
 import '../bridge/provider.dart';
 import '../data/transfers.dart';
 import '../kit/_internal/inset_painter.dart';
+import '../kit/dashed_divider.dart';
 import '../kit/lcd_panel.dart';
 import '../kit/metal_panel.dart';
 import '../kit/section_label.dart';
@@ -40,6 +41,23 @@ class _FilesScreenState extends State<FilesScreen> {
   void dispose() {
     _focus.dispose();
     super.dispose();
+  }
+
+  /// Open the OS file picker (or directory picker if [folder] is true) and
+  /// hand each chosen path to the bridge. Picker package is added in pubspec
+  /// later; for now this surfaces a snack to make the click feedback visible
+  /// instead of silently doing nothing.
+  Future<void> _addFiles({required bool folder}) async {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger?.showSnackBar(SnackBar(
+      duration: const Duration(milliseconds: 1800),
+      content: Text(
+        folder
+            ? 'Folder picker wires up in Phase 2.4 alongside RealBridge.'
+            : 'File picker wires up in Phase 2.4 alongside RealBridge.',
+      ),
+    ));
   }
 
   /// Folder-first sort within each segment (active → queued → done), then by id
@@ -115,7 +133,7 @@ class _FilesScreenState extends State<FilesScreen> {
                       SizedBox(
                         width: 280,
                         child: SingleChildScrollView(
-                          child: _leftColumn(t, sendSpeed, recvSpeed, totalSpeed),
+                          child: _leftColumn(t, sendSpeed, recvSpeed, totalSpeed, queue),
                         ),
                       ),
                       const SizedBox(width: 14),
@@ -131,7 +149,7 @@ class _FilesScreenState extends State<FilesScreen> {
     );
   }
 
-  Widget _leftColumn(GoDeskTheme t, int sendSpeed, int recvSpeed, int totalSpeed) {
+  Widget _leftColumn(GoDeskTheme t, int sendSpeed, int recvSpeed, int totalSpeed, List<TransferItem> queue) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
@@ -170,31 +188,48 @@ class _FilesScreenState extends State<FilesScreen> {
             children: <Widget>[
               const SectionLabel('Connection'),
               const SizedBox(height: 10),
-              LCDPanel(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text('> PEER', style: lcdDimLabel(theme: t)),
-                    const SizedBox(height: 2),
-                    Text('build-runner-03', style: lcdReadout(theme: t, size: 12)),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 8),
-              GridView.count(
-                crossAxisCount: 2,
-                shrinkWrap: true,
-                mainAxisSpacing: 6,
-                crossAxisSpacing: 6,
-                physics: const NeverScrollableScrollPhysics(),
-                childAspectRatio: 4.4,
-                children: const <Widget>[
-                  _ConnFlag(label: 'Encrypted', on: true),
-                  _ConnFlag(label: 'Direct P2P', on: true),
-                  _ConnFlag(label: 'Compressed', on: true),
-                  _ConnFlag(label: 'Resume', on: false),
-                ],
+              StreamBuilder<SessionState>(
+                stream: _bridge.sessionState(),
+                initialData: const SessionState(),
+                builder: (context, snap) {
+                  final inSession = snap.data?.inSession ?? false;
+                  final peerLabel = snap.data?.peerId ?? '—';
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      LCDPanel(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            Text('> PEER', style: lcdDimLabel(theme: t)),
+                            const SizedBox(height: 2),
+                            Text(
+                              inSession ? peerLabel : 'No active session',
+                              style: lcdReadout(theme: t, size: 12)
+                                  .copyWith(color: inSession ? null : t.lcdDim),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      GridView.count(
+                        crossAxisCount: 2,
+                        shrinkWrap: true,
+                        mainAxisSpacing: 6,
+                        crossAxisSpacing: 6,
+                        physics: const NeverScrollableScrollPhysics(),
+                        childAspectRatio: 4.4,
+                        children: <Widget>[
+                          _ConnFlag(label: 'Encrypted', on: inSession),
+                          _ConnFlag(label: 'Direct P2P', on: inSession),
+                          _ConnFlag(label: 'Compressed', on: inSession),
+                          const _ConnFlag(label: 'Resume', on: false),
+                        ],
+                      ),
+                    ],
+                  );
+                },
               ),
             ],
           ),
@@ -209,37 +244,49 @@ class _FilesScreenState extends State<FilesScreen> {
                 child: SectionLabel('Actions'),
               ),
               const SizedBox(height: 10),
-              TactileButton(
-                variant: TactileVariant.primary,
-                onPressed: () {},
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: <Widget>[
-                    Icon(Icons.add, size: 12),
-                    SizedBox(width: 4),
-                    Text('ADD FILES'),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 6),
-              TactileButton(
-                onPressed: () {},
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: <Widget>[
-                    Icon(Icons.folder_outlined, size: 12),
-                    SizedBox(width: 4),
-                    Text('ADD FOLDER'),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 6),
-              TactileButton(
-                small: true,
-                onPressed: () {},
-                child: const Text('CLEAR COMPLETED'),
+              StreamBuilder<SessionState>(
+                stream: _bridge.sessionState(),
+                initialData: const SessionState(),
+                builder: (context, snap) {
+                  final inSession = snap.data?.inSession ?? false;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      TactileButton(
+                        variant: TactileVariant.primary,
+                        onPressed: inSession ? () => _addFiles(folder: false) : null,
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: <Widget>[
+                            Icon(Icons.add, size: 12),
+                            SizedBox(width: 4),
+                            Text('ADD FILES'),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      TactileButton(
+                        onPressed: inSession ? () => _addFiles(folder: true) : null,
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: <Widget>[
+                            Icon(Icons.folder_outlined, size: 12),
+                            SizedBox(width: 4),
+                            Text('ADD FOLDER'),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      TactileButton(
+                        small: true,
+                        onPressed: queue.any((q) => q.done) ? () => _bridge.clearCompleted() : null,
+                        child: const Text('CLEAR COMPLETED'),
+                      ),
+                    ],
+                  );
+                },
               ),
             ],
           ),
@@ -283,10 +330,16 @@ class _FilesScreenState extends State<FilesScreen> {
                         const SizedBox(width: 12),
                         _activePlate(t, activeCount),
                         const Spacer(),
-                        const StatusLED(color: LEDColors.online, pulse: true, size: 6),
+                        StatusLED(
+                          color: activeCount > 0 ? LEDColors.online : LEDColors.offline,
+                          pulse: activeCount > 0,
+                          size: 6,
+                        ),
                         const SizedBox(width: 5),
-                        Text('TRANSFERRING',
-                            style: GDtype.ui(size: 9, weight: FontWeight.w700, color: t.subtle, letterSpacing: 0.9)),
+                        Text(
+                          activeCount > 0 ? 'TRANSFERRING' : 'IDLE',
+                          style: GDtype.ui(size: 9, weight: FontWeight.w700, color: t.subtle, letterSpacing: 0.9),
+                        ),
                       ],
                     ),
                   ),
@@ -314,51 +367,12 @@ class _FilesScreenState extends State<FilesScreen> {
           ),
         ),
         const SizedBox(height: 12),
-        MetalPanel(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Row(
-                children: <Widget>[
-                  const SectionLabel('Recent'),
-                  const Spacer(),
-                  Text('${completedItems.length} files',
-                      style: GDtype.mono(size: 10, color: t.subtle)),
-                ],
-              ),
-              const SizedBox(height: 8),
-              for (var i = 0; i < completedItems.length; i++)
-                Container(
-                  padding: const EdgeInsets.symmetric(vertical: 5),
-                  decoration: BoxDecoration(
-                    border: i < completedItems.length - 1
-                        ? Border(bottom: BorderSide(color: t.border, width: 0.5))
-                        : null,
-                  ),
-                  child: Row(
-                    children: <Widget>[
-                      const Icon(Icons.check, size: 11, color: Color(0xFF22A843)),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(completedItems[i].name,
-                            style: GDtype.mono(size: 11, weight: FontWeight.w600, color: t.heading)),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(formatBytes(completedItems[i].size),
-                          style: GDtype.mono(size: 10, color: t.subtle)),
-                      const SizedBox(width: 8),
-                      SizedBox(
-                        width: 60,
-                        child: Text(completedItems[i].time,
-                            textAlign: TextAlign.right,
-                            style: GDtype.ui(size: 10, color: t.subtle)),
-                      ),
-                    ],
-                  ),
-                ),
-            ],
-          ),
-        ),
+        // RECENT — completed transfers from THIS session. completedItems is
+        // demo-only (mock GODESK_DEMO data); production builds show empty
+        // state until a real transfer completes. Without RealBridge there's
+        // no persistent history yet; once it's wired, this list reads from
+        // bridge.completedTransfers().
+        _RecentPanel(theme: t, items: const <CompletedItem>[]),
       ],
     );
   }
@@ -442,20 +456,33 @@ class _TransferRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).extension<GoDeskTheme>()!;
-    final pct = item.progress.clamp(0.0, 1.0);
-    final isReceive = item.dir == TransferDir.receive;
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: selected ? t.accent.withValues(alpha: t.dark ? 0.15 : 0.08) : null,
-            border: isLast ? null : Border(bottom: BorderSide(color: t.border, width: 0.5)),
-          ),
-          child: Row(
+        child: Stack(
+          children: <Widget>[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              color: selected ? t.accent.withValues(alpha: t.dark ? 0.15 : 0.08) : null,
+              child: _rowBody(t),
+            ),
+            if (!isLast)
+              const Positioned(
+                left: 14, right: 14, bottom: 0,
+                child: IgnorePointer(child: DashedDivider(height: 1)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _rowBody(GoDeskTheme t) {
+    final pct = item.progress.clamp(0.0, 1.0);
+    final isReceive = item.dir == TransferDir.receive;
+    return Row(
             children: <Widget>[
               // direction tile
               Container(
@@ -533,9 +560,6 @@ class _TransferRow extends StatelessWidget {
                 _CancelChip(onTap: onCancel),
               ],
             ],
-          ),
-        ),
-      ),
     );
   }
 
@@ -695,6 +719,75 @@ class _ExtChip extends StatelessWidget {
 /// Hotkey intent — `Delete` cancels the currently-selected active transfer.
 class _CancelTransferIntent extends Intent {
   const _CancelTransferIntent();
+}
+
+/// "Recent" — completed transfers panel. Empty state explains the lack of
+/// data instead of showing demo files in production.
+class _RecentPanel extends StatelessWidget {
+  const _RecentPanel({required this.theme, required this.items});
+  final GoDeskTheme theme;
+  final List<CompletedItem> items;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = theme;
+    return MetalPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              const SectionLabel('Recent'),
+              const Spacer(),
+              Text(
+                items.isEmpty ? 'no history' : '${items.length} files',
+                style: GDtype.mono(size: 10, color: t.subtle),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (items.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Text(
+                'Completed transfers will appear here.',
+                style: GDtype.ui(size: 10, color: t.subtle),
+              ),
+            )
+          else
+            for (var i = 0; i < items.length; i++)
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                decoration: BoxDecoration(
+                  border: i < items.length - 1
+                      ? Border(bottom: BorderSide(color: t.border, width: 0.5))
+                      : null,
+                ),
+                child: Row(
+                  children: <Widget>[
+                    const Icon(Icons.check, size: 11, color: Color(0xFF22A843)),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(items[i].name,
+                          style: GDtype.mono(size: 11, weight: FontWeight.w600, color: t.heading)),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(formatBytes(items[i].size),
+                        style: GDtype.mono(size: 10, color: t.subtle)),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 60,
+                      child: Text(items[i].time,
+                          textAlign: TextAlign.right,
+                          style: GDtype.ui(size: 10, color: t.subtle)),
+                    ),
+                  ],
+                ),
+              ),
+        ],
+      ),
+    );
+  }
 }
 
 class _TransferQueueEmpty extends StatelessWidget {
