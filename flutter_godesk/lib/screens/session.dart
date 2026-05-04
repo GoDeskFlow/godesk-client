@@ -15,7 +15,9 @@
 
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../bridge/bridge.dart';
 import '../bridge/provider.dart';
@@ -304,7 +306,12 @@ class _SessionScreenState extends State<SessionScreen> {
 /// `texture_rgba_renderer`. The Texture widget is GPU-backed so frame updates
 /// are essentially free for Flutter — the Rust side writes pixels directly
 /// into the native texture buffer Flutter created.
-class _RemoteFrame extends StatelessWidget {
+///
+/// Wraps the Texture in a Listener (mouse) + Focus + KeyboardListener
+/// (keyboard) so input events are forwarded to the Rust core. Coordinate
+/// translation: Flutter's local pixel position is scaled to remote-screen
+/// coordinates using the AspectRatio-fit child rect.
+class _RemoteFrame extends StatefulWidget {
   const _RemoteFrame({
     required this.textureId,
     required this.width,
@@ -316,13 +323,131 @@ class _RemoteFrame extends StatelessWidget {
   final int height;
 
   @override
+  State<_RemoteFrame> createState() => _RemoteFrameState();
+}
+
+class _RemoteFrameState extends State<_RemoteFrame> {
+  final FocusNode _focus = FocusNode();
+  final GlobalKey _frameKey = GlobalKey();
+
+  Bridge get _bridge => BridgeProvider.of(context);
+
+  @override
+  void dispose() {
+    _focus.dispose();
+    super.dispose();
+  }
+
+  /// Map a pointer's local position (in widget space) to remote-screen
+  /// pixel coordinates. The Texture widget is fit inside an AspectRatio
+  /// box, so the displayed area may be letter- or pillar-boxed inside the
+  /// black container. Off-area pointer events are dropped.
+  (int, int)? _toRemote(Offset local, BoxConstraints constraints) {
+    if (widget.width <= 0 || widget.height <= 0) return null;
+    // Compute the rect occupied by the AspectRatio child within the parent.
+    final parentAspect = constraints.maxWidth / constraints.maxHeight;
+    final remoteAspect = widget.width / widget.height;
+    double childWidth, childHeight, dx0, dy0;
+    if (parentAspect > remoteAspect) {
+      // Pillar-box: parent wider than remote.
+      childHeight = constraints.maxHeight;
+      childWidth = childHeight * remoteAspect;
+      dx0 = (constraints.maxWidth - childWidth) / 2;
+      dy0 = 0;
+    } else {
+      // Letter-box: parent taller than remote.
+      childWidth = constraints.maxWidth;
+      childHeight = childWidth / remoteAspect;
+      dx0 = 0;
+      dy0 = (constraints.maxHeight - childHeight) / 2;
+    }
+    final localX = local.dx - dx0;
+    final localY = local.dy - dy0;
+    if (localX < 0 || localX > childWidth || localY < 0 || localY > childHeight) {
+      return null;
+    }
+    final rx = (localX * widget.width / childWidth).round().clamp(0, widget.width - 1);
+    final ry = (localY * widget.height / childHeight).round().clamp(0, widget.height - 1);
+    return (rx, ry);
+  }
+
+  /// Flutter pointer button mask → Rust core's expected `buttons` value.
+  /// Flutter's PointerEvent.buttons is already a bitmask matching what
+  /// the rdp/vnc protocols use (1=left, 2=right, 4=middle).
+  int _flutterButtonsToProtocol(int flutter) => flutter;
+
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is KeyRepeatEvent) return KeyEventResult.handled;
+    final down = event is KeyDownEvent;
+    final logical = event.logicalKey;
+    final physical = event.physicalKey;
+    // The Rust core wants the LogicalKeyboardKey debug name (e.g. "keyA",
+    // "controlLeft", "f1"). `LogicalKeyboardKey.keyLabel` is too lossy
+    // (returns 'A' for keyA), so we synthesize from debugName.
+    final name = logical.debugName ?? 'unknown';
+    _bridge.sendKey(
+      name: name,
+      platformCode: logical.keyId,
+      positionCode: physical.usbHidUsage,
+      lockModes: 0,
+      down: down,
+    );
+    return KeyEventResult.handled;
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Container(
       color: const Color(0xFF000000),
       alignment: Alignment.center,
-      child: AspectRatio(
-        aspectRatio: width > 0 && height > 0 ? width / height : 16 / 9,
-        child: Texture(textureId: textureId),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return Focus(
+            focusNode: _focus,
+            autofocus: true,
+            onKeyEvent: _onKey,
+            child: Listener(
+              behavior: HitTestBehavior.opaque,
+              onPointerHover: (e) {
+                final r = _toRemote(e.localPosition, constraints);
+                if (r != null) _bridge.sendMouseMove(r.$1, r.$2);
+              },
+              onPointerMove: (e) {
+                final r = _toRemote(e.localPosition, constraints);
+                if (r != null) _bridge.sendMouseMove(r.$1, r.$2);
+              },
+              onPointerDown: (e) {
+                _focus.requestFocus();
+                final r = _toRemote(e.localPosition, constraints);
+                if (r != null) _bridge.sendMouseMove(r.$1, r.$2);
+                _bridge.sendMouseButton(
+                  down: true,
+                  button: _flutterButtonsToProtocol(e.buttons),
+                );
+              },
+              onPointerUp: (e) {
+                _bridge.sendMouseButton(
+                  down: false,
+                  button: _flutterButtonsToProtocol(e.buttons | 1),
+                );
+              },
+              onPointerSignal: (e) {
+                if (e is PointerScrollEvent) {
+                  // Flutter sends pixel deltas; Rust core expects line counts.
+                  final lines = (e.scrollDelta.dy / 40).round();
+                  if (lines != 0) _bridge.sendMouseWheel(-lines);
+                }
+              },
+              child: SizedBox.expand(
+                child: AspectRatio(
+                  key: _frameKey,
+                  aspectRatio: widget.width / widget.height,
+                  child: Texture(textureId: widget.textureId),
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }

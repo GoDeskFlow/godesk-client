@@ -157,6 +157,28 @@ abstract class Bridge {
   Stream<ChatMessage> chatEvents();
   Future<void> sendChat(String text);
 
+  // — Remote input (mouse + keyboard) —
+  /// Cursor moved to absolute remote-screen coordinates `(x, y)`.
+  Future<void> sendMouseMove(int x, int y);
+
+  /// Mouse button event. `button` is the Flutter pointer button mask
+  /// (1 = primary/left, 2 = secondary/right, 4 = middle, 8 = back, 16 = forward).
+  Future<void> sendMouseButton({required bool down, required int button});
+
+  /// Vertical wheel delta — positive values scroll down on the remote.
+  Future<void> sendMouseWheel(int deltaY);
+
+  /// Raw keyboard event passthrough. `name` is `LogicalKeyboardKey.keyLabel`
+  /// or similar identifier; `platformCode` is the Win32 VK / X11 keysym etc;
+  /// `lockModes` carries CapsLock/NumLock state as a bitmask.
+  Future<void> sendKey({
+    required String name,
+    required int platformCode,
+    required int positionCode,
+    required int lockModes,
+    required bool down,
+  });
+
   // — Transfers —
   Stream<List<TransferItem>> transfers();
   Future<void> addTransfer({required String filePath, required TransferDir dir});
@@ -167,6 +189,16 @@ abstract class Bridge {
   /// Build a shareable URL like `https://godeskflow.com/c/<base64(id|otp)>`.
   /// Receiver clicking should open GoDesk and prefill the connect form.
   String inviteLink({required String id, required String otp});
+
+  // — Persisted settings ───────────────────────────────────────────────
+  /// Read a global option by key. Returns empty string if unset (matches
+  /// upstream `main_get_option` semantics so callers don't need null
+  /// handling).
+  Future<String> getOption(String key);
+
+  /// Write a global option. Empty `value` clears it. RustDesk persists
+  /// these in its `options.json` config file.
+  Future<void> setOption(String key, String value);
 
   void dispose();
 }

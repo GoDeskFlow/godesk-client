@@ -1,6 +1,7 @@
 // Files screen — VU meters, transfer queue, completed list.
 // Port of godesk-skeuo-files.jsx.
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -46,21 +47,33 @@ class _FilesScreenState extends State<FilesScreen> {
   /// Open the OS file picker (or directory picker if [folder] is true) and
   /// hand each chosen path to the bridge. Picker package is added in pubspec
   /// alongside RealBridge wiring; for now the click feedback is a snackbar
-  /// rather than a silent no-op or a confusingly-disabled button.
+  /// Opens an OS file/dir picker, then queues each selected path through the
+  /// bridge. Pre-flight check: needs an active session, otherwise just
+  /// surfaces a hint via SnackBar instead of silently failing.
   Future<void> _addFiles({required bool folder}) async {
     if (!mounted) return;
     final messenger = ScaffoldMessenger.maybeOf(context);
-    if (messenger == null) return;
     final inSession = (await _bridge.sessionState().first).inSession;
-    final msg = !inSession
-        ? 'Connect to a peer first — file transfer needs an active session.'
-        : folder
-            ? 'Folder picker wires up in Phase 2.4 alongside RealBridge.'
-            : 'File picker wires up in Phase 2.4 alongside RealBridge.';
-    messenger.showSnackBar(SnackBar(
-      duration: const Duration(milliseconds: 2200),
-      content: Text(msg),
-    ));
+    if (!inSession) {
+      messenger?.showSnackBar(const SnackBar(
+        duration: Duration(milliseconds: 2200),
+        content: Text('Connect to a peer first — file transfer needs an active session.'),
+      ));
+      return;
+    }
+    if (folder) {
+      final path = await FilePicker.platform.getDirectoryPath();
+      if (path == null) return;
+      await _bridge.addTransfer(filePath: path, dir: TransferDir.send);
+    } else {
+      final res = await FilePicker.platform.pickFiles(allowMultiple: true);
+      if (res == null) return;
+      for (final f in res.files) {
+        if (f.path != null) {
+          await _bridge.addTransfer(filePath: f.path!, dir: TransferDir.send);
+        }
+      }
+    }
   }
 
   /// Folder-first sort within each segment (active → queued → done), then by id

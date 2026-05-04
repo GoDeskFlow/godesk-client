@@ -48,7 +48,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _numericOtpLoaded = false;
   bool _numericOtp = false;
 
+  bool _persistedLoaded = false;
+
   Bridge get _bridge => BridgeProvider.of(context);
+
+  /// Read a persisted boolean — RustDesk's convention is `"Y"` for true,
+  /// empty string for false.
+  Future<bool> _readBool(String key, {bool defaultValue = false}) async {
+    final v = await _bridge.getOption(key);
+    if (v.isEmpty) return defaultValue;
+    return v == 'Y' || v == 'true' || v == '1';
+  }
+
+  Future<void> _writeBool(String key, bool value) =>
+      _bridge.setOption(key, value ? 'Y' : '');
 
   @override
   void didChangeDependencies() {
@@ -74,6 +87,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _numericOtpLoaded = true;
       setState(() => _numericOtp = _bridge.numericOtp);
     }
+    if (!_persistedLoaded) {
+      _persistedLoaded = true;
+      _loadPersisted();
+    }
+  }
+
+  /// Pull the current values from the bridge so toggle state matches what's
+  /// actually persisted. Keys mirror upstream RustDesk's `options.json`.
+  Future<void> _loadPersisted() async {
+    final autostart = await _readBool('enable-auto-launch', defaultValue: true);
+    final startMin = await _readBool('enable-start-on-boot-minimized', defaultValue: true);
+    final autoUpdate = await _readBool('enable-check-update', defaultValue: true);
+    final permControl = await _readBool('enable-keyboard', defaultValue: true);
+    final permFiles = await _readBool('enable-file-transfer', defaultValue: true);
+    final permClip = await _readBool('enable-clipboard', defaultValue: false);
+    final permAudio = await _readBool('enable-audio', defaultValue: false);
+    if (!mounted) return;
+    setState(() {
+      _autostart = autostart;
+      _startMin = startMin;
+      _autoUpdate = autoUpdate;
+      _permControl = permControl;
+      _permFiles = permFiles;
+      _permClip = permClip;
+      _permAudio = permAudio;
+    });
   }
 
   @override
@@ -146,11 +185,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
             children: <Widget>[
               const SectionLabel('Startup'),
               const SizedBox(height: 12),
-              _toggleRow('Launch GoDesk at login', _autostart, (v) => setState(() => _autostart = v), t),
+              _toggleRow('Launch GoDesk at login', _autostart, (v) {
+                setState(() => _autostart = v);
+                _writeBool('enable-auto-launch', v);
+              }, t),
               const SizedBox(height: 10),
-              _toggleRow('Start minimized to menu bar', _startMin, (v) => setState(() => _startMin = v), t),
+              _toggleRow('Start minimized to menu bar', _startMin, (v) {
+                setState(() => _startMin = v);
+                _writeBool('enable-start-on-boot-minimized', v);
+              }, t),
               const SizedBox(height: 10),
-              _toggleRow('Check for updates automatically', _autoUpdate, (v) => setState(() => _autoUpdate = v), t),
+              _toggleRow('Check for updates automatically', _autoUpdate, (v) {
+                setState(() => _autoUpdate = v);
+                _writeBool('enable-check-update', v);
+              }, t),
             ],
           ),
         ),
@@ -288,13 +336,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
             children: <Widget>[
               const SectionLabel('Permissions for incoming sessions'),
               const SizedBox(height: 12),
-              _toggleRow('Allow remote control of keyboard & mouse', _permControl, (v) => setState(() => _permControl = v), t),
+              _toggleRow('Allow remote control of keyboard & mouse', _permControl, (v) {
+                setState(() => _permControl = v);
+                _writeBool('enable-keyboard', v);
+              }, t),
               const SizedBox(height: 10),
-              _toggleRow('Allow file transfers', _permFiles, (v) => setState(() => _permFiles = v), t),
+              _toggleRow('Allow file transfers', _permFiles, (v) {
+                setState(() => _permFiles = v);
+                _writeBool('enable-file-transfer', v);
+              }, t),
               const SizedBox(height: 10),
-              _toggleRow('Share clipboard with remote', _permClip, (v) => setState(() => _permClip = v), t),
+              _toggleRow('Share clipboard with remote', _permClip, (v) {
+                setState(() => _permClip = v);
+                _writeBool('enable-clipboard', v);
+              }, t),
               const SizedBox(height: 10),
-              _toggleRow('Allow audio capture', _permAudio, (v) => setState(() => _permAudio = v), t),
+              _toggleRow('Allow audio capture', _permAudio, (v) {
+                setState(() => _permAudio = v);
+                _writeBool('enable-audio', v);
+              }, t),
             ],
           ),
         ),

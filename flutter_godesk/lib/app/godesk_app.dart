@@ -33,6 +33,7 @@ class GoDeskShell extends StatefulWidget {
 class _GoDeskShellState extends State<GoDeskShell> {
   SkeuoTab _tab = _envInitialTab();
   bool _onboarding = _envInitialOnboarding();
+  bool _onboardingChecked = false;
   Peer? _connecting = _envInitialConnecting();
   Peer? _session = _envInitialSession();
 
@@ -68,6 +69,27 @@ class _GoDeskShellState extends State<GoDeskShell> {
   void initState() {
     super.initState();
     HardwareKeyboard.instance.addHandler(_keyHandler);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_onboardingChecked) {
+      _onboardingChecked = true;
+      // Check if we need to show onboarding. The env-flag override always
+      // wins (used by integration tests + screenshots).
+      if (_envInitialOnboarding()) return;
+      BridgeProvider.of(context).getOption('godesk-onboarding-complete').then((v) {
+        if (!mounted) return;
+        // Empty/missing → first-run, show onboarding.
+        if (v.isEmpty) setState(() => _onboarding = true);
+      });
+    }
+  }
+
+  Future<void> _completeOnboarding() async {
+    setState(() => _onboarding = false);
+    await BridgeProvider.of(context).setOption('godesk-onboarding-complete', '1');
   }
 
   @override
@@ -107,7 +129,7 @@ class _GoDeskShellState extends State<GoDeskShell> {
       children: <Widget>[
         SkeuoChrome(current: _tab, onTab: (_) {}),
         Expanded(
-          child: OnboardingScreen(onComplete: () => setState(() => _onboarding = false)),
+          child: OnboardingScreen(onComplete: _completeOnboarding),
         ),
       ],
     );

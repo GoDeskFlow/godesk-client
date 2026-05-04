@@ -521,9 +521,9 @@ class RealBridge implements Bridge {
 
   @override
   Future<void> requestRestart() async {
-    // No direct FFI for restart in flutter_ffi.rs; use sessionReconnect with a
-    // hard-flush option. TODO: confirm the right call once a remote test
-    // machine is available.
+    final sid = _currentSessionId;
+    if (sid == null) return;
+    await _api.sessionRestartRemoteDevice(sessionId: sid);
   }
 
   @override
@@ -574,6 +574,66 @@ class RealBridge implements Bridge {
     await _api.sessionSendChat(sessionId: sid, text: text.trim());
   }
 
+  // ─── Remote input ─────────────────────────────────────────────────────
+
+  @override
+  Future<void> sendMouseMove(int x, int y) async {
+    final sid = _currentSessionId;
+    if (sid == null) return;
+    // Upstream's input_model.dart sends mouse-move with `{x, y}` only — no
+    // `type` field. The Rust core treats absent type as a move event.
+    await _api.sessionSendMouse(
+      sessionId: sid,
+      msg: jsonEncode(<String, String>{'x': '$x', 'y': '$y'}),
+    );
+  }
+
+  @override
+  Future<void> sendMouseButton({required bool down, required int button}) async {
+    final sid = _currentSessionId;
+    if (sid == null) return;
+    await _api.sessionSendMouse(
+      sessionId: sid,
+      msg: jsonEncode(<String, dynamic>{
+        'type': down ? 'down' : 'up',
+        'buttons': button,
+      }),
+    );
+  }
+
+  @override
+  Future<void> sendMouseWheel(int deltaY) async {
+    final sid = _currentSessionId;
+    if (sid == null || deltaY == 0) return;
+    await _api.sessionSendMouse(
+      sessionId: sid,
+      msg: jsonEncode(<String, String>{
+        'type': 'wheel',
+        'y': '$deltaY',
+      }),
+    );
+  }
+
+  @override
+  Future<void> sendKey({
+    required String name,
+    required int platformCode,
+    required int positionCode,
+    required int lockModes,
+    required bool down,
+  }) async {
+    final sid = _currentSessionId;
+    if (sid == null) return;
+    await _api.sessionHandleFlutterRawKeyEvent(
+      sessionId: sid,
+      name: name,
+      platformCode: platformCode,
+      positionCode: positionCode,
+      lockModes: lockModes,
+      downOrUp: down,
+    );
+  }
+
   // ─── Transfers ────────────────────────────────────────────────────────
 
   @override
@@ -581,18 +641,34 @@ class RealBridge implements Bridge {
 
   @override
   Future<void> addTransfer({required String filePath, required TransferDir dir}) async {
-    // TODO(realbridge): wire session_send_files. Needs file_picker package
-    // for the UI half; the Rust call signature differs (whole list of paths
-    // at once, not single path). Tracked in feature-gap-rudesktop.md.
+    final sid = _currentSessionId;
+    if (sid == null || filePath.isEmpty) return;
+    // For MVP we only support local→remote (TransferDir.send). Receive
+    // requires a remote-dir browser which is Phase 5.
+    if (dir != TransferDir.send) return;
+    final basename = filePath.split(RegExp(r'[\\/]')).last;
+    final isDir = await Directory(filePath).exists();
+    await _api.sessionSendFiles(
+      sessionId: sid,
+      actId: _nextJobId++,
+      path: filePath,
+      // No remote-dir picker yet — Rust core writes to the remote user's
+      // home / configured download directory under this filename.
+      to: basename,
+      fileNum: 0,
+      includeHidden: false,
+      isRemote: false,
+      isDir: isDir,
+    );
   }
+
+  int _nextJobId = 1;
 
   @override
   Future<void> cancelTransfer(int id) async {
     final sid = _currentSessionId;
     if (sid == null) return;
-    // sessionCancelJob exists in upstream; if not matching by name in
-    // generated_bridge.dart, we'll need to add a wrapper.
-    // await _api.sessionCancelJob(sessionId: sid, actId: id);
+    await _api.sessionCancelJob(sessionId: sid, actId: id);
   }
 
   @override
@@ -600,6 +676,15 @@ class RealBridge implements Bridge {
     _queue.removeWhere((i) => i.done);
     _transfers.add(List<TransferItem>.unmodifiable(_queue));
   }
+
+  // ─── Persisted settings ──────────────────────────────────────────────
+
+  @override
+  Future<String> getOption(String key) => _api.mainGetOption(key: key);
+
+  @override
+  Future<void> setOption(String key, String value) =>
+      _api.mainSetOption(key: key, value: value);
 
   // ─── Invite link (local only) ─────────────────────────────────────────
 

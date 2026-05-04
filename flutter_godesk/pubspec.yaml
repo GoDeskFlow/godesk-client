@@ -1,7 +1,7 @@
 name: flutter_godesk
 description: GoDesk skeuomorphic UI — sibling package replacing upstream client/flutter.
 publish_to: 'none'
-version: 0.2.1+21
+version: 0.3.0+30
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -33,6 +33,8 @@ dependencies:
     git:
       url: https://github.com/rustdesk-org/flutter_texture_rgba_renderer
       ref: 42797e0f03141dc2b585f76c64a13974508058b4
+  # File picker for ADD FILES / ADD FOLDER actions in the Files screen.
+  file_picker: ^8.1.4
 
 dev_dependencies:
   flutter_test:

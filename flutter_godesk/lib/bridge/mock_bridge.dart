@@ -352,6 +352,40 @@ class MockBridge implements Bridge {
   }
 
   @override
+  Future<void> sendMouseMove(int x, int y) async {
+    // Mock: no remote, just swallow.
+  }
+
+  @override
+  Future<void> sendMouseButton({required bool down, required int button}) async {}
+
+  @override
+  Future<void> sendMouseWheel(int deltaY) async {}
+
+  @override
+  Future<void> sendKey({
+    required String name,
+    required int platformCode,
+    required int positionCode,
+    required int lockModes,
+    required bool down,
+  }) async {}
+
+  final Map<String, String> _options = <String, String>{};
+
+  @override
+  Future<String> getOption(String key) async => _options[key] ?? '';
+
+  @override
+  Future<void> setOption(String key, String value) async {
+    if (value.isEmpty) {
+      _options.remove(key);
+    } else {
+      _options[key] = value;
+    }
+  }
+
+  @override
   String inviteLink({required String id, required String otp}) {
     final raw = '${id.replaceAll(' ', '')}|$otp';
     final encoded = base64Url.encode(utf8.encode(raw)).replaceAll('=', '');
