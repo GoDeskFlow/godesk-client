@@ -220,8 +220,21 @@ class TrayController with TrayListener, WindowListener {
 
   @override
   void onWindowClose() async {
-    // Hide instead of quit.
-    await windowManager.hide();
+    // X (red traffic light) = real quit. Earlier behaviour ("hide to tray")
+    // came from `setPreventClose(true)` + `windowManager.hide()` in this
+    // handler. That left the process resident in memory after the user
+    // thought they closed it, holding a lock on flutter_windows.dll that
+    // blocked installer upgrades and confused first-time users who couldn't
+    // find the tray icon.
+    //
+    // Hide-to-tray remains available via:
+    //   - yellow traffic light (windowManager.minimize)
+    //   - tray menu → "Hide to tray"
+    //
+    // We deliberately don't `setPreventClose(false)` here — the close has
+    // already been delivered to us; calling `destroy()` quits cleanly.
+    await _crashLog.close();
+    await windowManager.destroy();
   }
 
   @override
