@@ -45,18 +45,21 @@ class _FilesScreenState extends State<FilesScreen> {
 
   /// Open the OS file picker (or directory picker if [folder] is true) and
   /// hand each chosen path to the bridge. Picker package is added in pubspec
-  /// later; for now this surfaces a snack to make the click feedback visible
-  /// instead of silently doing nothing.
+  /// alongside RealBridge wiring; for now the click feedback is a snackbar
+  /// rather than a silent no-op or a confusingly-disabled button.
   Future<void> _addFiles({required bool folder}) async {
     if (!mounted) return;
     final messenger = ScaffoldMessenger.maybeOf(context);
-    messenger?.showSnackBar(SnackBar(
-      duration: const Duration(milliseconds: 1800),
-      content: Text(
-        folder
+    if (messenger == null) return;
+    final inSession = (await _bridge.sessionState().first).inSession;
+    final msg = !inSession
+        ? 'Connect to a peer first — file transfer needs an active session.'
+        : folder
             ? 'Folder picker wires up in Phase 2.4 alongside RealBridge.'
-            : 'File picker wires up in Phase 2.4 alongside RealBridge.',
-      ),
+            : 'File picker wires up in Phase 2.4 alongside RealBridge.';
+    messenger.showSnackBar(SnackBar(
+      duration: const Duration(milliseconds: 2200),
+      content: Text(msg),
     ));
   }
 
@@ -244,49 +247,43 @@ class _FilesScreenState extends State<FilesScreen> {
                 child: SectionLabel('Actions'),
               ),
               const SizedBox(height: 10),
-              StreamBuilder<SessionState>(
-                stream: _bridge.sessionState(),
-                initialData: const SessionState(),
-                builder: (context, snap) {
-                  final inSession = snap.data?.inSession ?? false;
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: <Widget>[
-                      TactileButton(
-                        variant: TactileVariant.primary,
-                        onPressed: inSession ? () => _addFiles(folder: false) : null,
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: <Widget>[
-                            Icon(Icons.add, size: 12),
-                            SizedBox(width: 4),
-                            Text('ADD FILES'),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      TactileButton(
-                        onPressed: inSession ? () => _addFiles(folder: true) : null,
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: <Widget>[
-                            Icon(Icons.folder_outlined, size: 12),
-                            SizedBox(width: 4),
-                            Text('ADD FOLDER'),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      TactileButton(
-                        small: true,
-                        onPressed: queue.any((q) => q.done) ? () => _bridge.clearCompleted() : null,
-                        child: const Text('CLEAR COMPLETED'),
-                      ),
-                    ],
-                  );
-                },
+              // Actions are always clickable — the previous "disabled outside
+              // a session" UX was opaque (greyed-out icons looked like broken
+              // glyphs and clicks did nothing). The buttons now always give
+              // feedback: a snackbar explains the picker wires up alongside
+              // RealBridge in Phase 2.4. CLEAR COMPLETED stays conditional —
+              // there's no honest action to take when nothing's done.
+              TactileButton(
+                variant: TactileVariant.primary,
+                onPressed: () => _addFiles(folder: false),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: <Widget>[
+                    Icon(Icons.add, size: 12),
+                    SizedBox(width: 4),
+                    Text('ADD FILES'),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 6),
+              TactileButton(
+                onPressed: () => _addFiles(folder: true),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: <Widget>[
+                    Icon(Icons.folder_outlined, size: 12),
+                    SizedBox(width: 4),
+                    Text('ADD FOLDER'),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 6),
+              TactileButton(
+                small: true,
+                onPressed: queue.any((q) => q.done) ? () => _bridge.clearCompleted() : null,
+                child: const Text('CLEAR COMPLETED'),
               ),
             ],
           ),

@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 
 import '../theme/bevels.dart';
 import '../theme/godesk_theme.dart';
+import 'brushed_overlay.dart';
 
 class MetalPanel extends StatelessWidget {
   const MetalPanel({
@@ -39,15 +40,12 @@ class MetalPanel extends StatelessWidget {
         borderRadius: BorderRadius.circular(borderRadius - 0.5),
         child: Stack(
           children: <Widget>[
-            // Brushed-metal vertical stripes overlay.
-            Positioned.fill(
-              child: IgnorePointer(
-                child: Opacity(
-                  opacity: 0.6,
-                  child: DecoratedBox(decoration: BoxDecoration(gradient: t.brushedStripes)),
-                ),
-              ),
-            ),
+            // Brushed-metal vertical stripes overlay — true 1-px-on / 3-px-off
+            // pattern (CSS `repeating-linear-gradient(90deg, brushed 0 1px,
+            // transparent 1px 4px)`). Earlier port used a single gradient with
+            // tileMode:repeated which Flutter stretches across the full panel
+            // width — texture vanished. CustomPainter draws actual stripes.
+            const Positioned.fill(child: BrushedOverlay()),
             // Top 1px highlight (the outset top edge of the bevel).
             Positioned(
               top: 0,

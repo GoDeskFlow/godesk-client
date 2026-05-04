@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../kit/_internal/inset_painter.dart';
+import '../kit/brushed_overlay.dart';
 import '../theme/godesk_theme.dart';
 import '../theme/typography.dart';
 import 'skeuo_logo.dart';
@@ -46,19 +47,31 @@ class SkeuoChrome extends StatelessWidget {
       height: 44,
       child: Stack(
         children: <Widget>[
-          // Layer 1 — drag region fills the chrome.
+          // Layer 1 — drag region fills the chrome. Two stacked decorations:
+          // the chromeGradient base + brushed-metal vertical stripes overlay.
+          // DecoratedBox WITHOUT a sized child renders 0×0 in Flutter, so the
+          // stripes overlay must live in its own Positioned.fill or it will
+          // disappear (regression introduced when first lifting drag-area
+          // out of the controls Row — user reported "фон заходит").
           Positioned.fill(
             child: DragToMoveArea(
-              child: Container(
-                decoration: BoxDecoration(
-                  gradient: t.chromeGradient,
-                  border: Border(bottom: BorderSide(color: t.chromeBorder)),
-                ),
-                child: IgnorePointer(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(gradient: t.brushedStripes),
+              child: Stack(
+                children: <Widget>[
+                  Positioned.fill(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: t.chromeGradient,
+                        border: Border(bottom: BorderSide(color: t.chromeBorder)),
+                      ),
+                    ),
                   ),
-                ),
+                  // Real brushed-stripes overlay (1-px-on / 3-px-off via
+                  // CustomPainter — see kit/brushed_overlay.dart for why a
+                  // gradient with tileMode:repeated didn't work here).
+                  const Positioned.fill(
+                    child: BrushedOverlay(opacity: 0.4),
+                  ),
+                ],
               ),
             ),
           ),
@@ -78,7 +91,10 @@ class SkeuoChrome extends StatelessWidget {
                         const SkeuoLogo(),
                         const SizedBox(width: 7),
                         Text(
-                          'GoDesk',
+                          // Reference uses CSS `text-transform: uppercase` →
+                          // displays "GODESK". Without uppercasing here the
+                          // chrome shows mixed-case "GoDesk".
+                          'GoDesk'.toUpperCase(),
                           style: GDtype.wordmark(
                             size: 12,
                             color: t.heading,

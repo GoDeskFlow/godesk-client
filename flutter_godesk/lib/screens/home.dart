@@ -277,7 +277,15 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: TactileButton(
                       variant: _copiedId ? TactileVariant.defaultStyle : TactileVariant.primary,
                       onPressed: _copyId,
-                      child: Text(_copiedId ? 'COPIED' : 'COPY ID'),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: <Widget>[
+                          Icon(_copiedId ? Icons.check : Icons.content_copy_outlined, size: 12),
+                          const SizedBox(width: 4),
+                          Text(_copiedId ? 'COPIED' : 'COPY ID'),
+                        ],
+                      ),
                     ),
                   ),
                   const SizedBox(width: 6),
@@ -327,7 +335,15 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: TactileButton(
                       small: true,
                       onPressed: () => setState(() => _showPw = !_showPw),
-                      child: Text(_showPw ? 'HIDE' : 'SHOW'),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: <Widget>[
+                          Icon(_showPw ? Icons.visibility_off_outlined : Icons.visibility_outlined, size: 11),
+                          const SizedBox(width: 4),
+                          Text(_showPw ? 'HIDE' : 'SHOW'),
+                        ],
+                      ),
                     ),
                   ),
                   const SizedBox(width: 6),
@@ -335,7 +351,15 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: TactileButton(
                       small: true,
                       onPressed: () => setState(() => _password = genPassword()),
-                      child: const Text('NEW'),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: <Widget>[
+                          Icon(Icons.refresh, size: 11),
+                          SizedBox(width: 4),
+                          Text('NEW'),
+                        ],
+                      ),
                     ),
                   ),
                   const SizedBox(width: 6),
@@ -343,7 +367,15 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: TactileButton(
                       small: true,
                       onPressed: _copyPw,
-                      child: Text(_copiedPw ? 'OK' : 'COPY'),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: <Widget>[
+                          Icon(_copiedPw ? Icons.check : Icons.content_copy_outlined, size: 11),
+                          const SizedBox(width: 4),
+                          Text(_copiedPw ? 'OK' : 'COPY'),
+                        ],
+                      ),
                     ),
                   ),
                 ],
