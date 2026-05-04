@@ -1,7 +1,7 @@
 name: flutter_godesk
 description: GoDesk skeuomorphic UI — sibling package replacing upstream client/flutter.
 publish_to: 'none'
-version: 0.1.6+6
+version: 0.1.7+7
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -30,7 +30,13 @@ dev_dependencies:
   ffigen: ^8.0.2
 
 flutter:
-  uses-material-design: false
+  # Bundles MaterialIcons-Regular.otf so `Icons.X` glyphs (content_copy,
+  # refresh, visibility, arrow_forward, etc.) actually render. With this set
+  # to false (the previous value), every Material Icon used across the UI —
+  # the COPY ID clipboard, OTP eye/refresh, CONNECT arrow, ADD FILES plus,
+  # session toolbar mic/record, etc. — fell back to tofu squares.
+  # Cost: ~600 KB to bundle size, accepted for visible-icon fix.
+  uses-material-design: true
   assets:
     - assets/icons/
   # Bundled per Phase 2.3 — offline-first, no runtime CDN fetch.
