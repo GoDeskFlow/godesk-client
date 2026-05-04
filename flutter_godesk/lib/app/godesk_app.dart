@@ -55,7 +55,16 @@ class _GoDeskShellState extends State<GoDeskShell> {
   static Peer? _envInitialSession() =>
       const String.fromEnvironment('GODESK_INIT') == 'session' ? recentPeers.first : null;
 
-  void _connect(Peer p) => setState(() => _connecting = p);
+  /// HomeScreen invokes this with the chosen ConnectMode wire-value. We
+  /// remember it on the shell so ConnectingOverlay → bridge.connect can
+  /// pass the right session-flags via the mode argument.
+  String? _pendingMode;
+  void _connect(Peer p, {String? mode}) {
+    setState(() {
+      _connecting = p;
+      _pendingMode = mode;
+    });
+  }
   void _connectComplete() {
     setState(() {
       _session = _connecting;
@@ -152,6 +161,7 @@ class _GoDeskShellState extends State<GoDeskShell> {
           Positioned.fill(
             child: ConnectingOverlay(
               peerId: _connecting!.id,
+              mode: _pendingMode,
               onCancel: () => setState(() => _connecting = null),
               onComplete: _connectComplete,
             ),

@@ -26,6 +26,7 @@ import 'dart:io';
 import 'package:uuid/uuid.dart';
 import 'package:texture_rgba_renderer/texture_rgba_renderer.dart';
 
+import '../data/invite_link.dart';
 import '../data/peers.dart';
 import '../data/transfers.dart';
 import 'bridge.dart';
@@ -83,6 +84,8 @@ class RealBridge implements Bridge {
   bool _numericOtp = false;
 
   late final StreamController<List<Peer>> _peers;
+  late final StreamController<List<Peer>> _lanPeersCtl =
+      StreamController<List<Peer>>.broadcast();
   late final StreamController<Diagnostics> _diagnostics;
   late final StreamController<List<TransferItem>> _transfers;
   late final StreamController<SessionState> _sessionState;
@@ -140,6 +143,9 @@ class RealBridge implements Bridge {
       case 'peers':
         _onPeersUpdate(body);
         break;
+      case 'load_lan_peers':
+        _onLanPeersUpdate(body);
+        break;
       case 'chat_client_mode':
       case 'chat_message':
         _onChatMessage(body);
@@ -164,6 +170,19 @@ class RealBridge implements Bridge {
     } catch (e) {
       // ignore: avoid_print
       print('[RealBridge] failed to parse peers: $e');
+    }
+  }
+
+  void _onLanPeersUpdate(Map<String, dynamic> body) {
+    final raw = body['peers'] as String? ?? body['data'] as String?;
+    if (raw == null) return;
+    try {
+      final list = jsonDecode(raw) as List<dynamic>;
+      final lan = list.map(_peerFromJson).whereType<Peer>().toList();
+      _lanPeersCtl.add(lan);
+    } catch (e) {
+      // ignore: avoid_print
+      print('[RealBridge] failed to parse lan peers: $e');
     }
   }
 
@@ -414,6 +433,18 @@ class RealBridge implements Bridge {
   }
 
   @override
+  Stream<List<Peer>> lanPeers() => _lanPeersCtl.stream;
+
+  @override
+  Future<void> triggerLanDiscovery() async {
+    // Kick the Rust core's mDNS sweep + ask it to (re-)load the in-memory
+    // LAN peer list. Both publish to the global event stream which we
+    // demultiplex back into _lanPeersCtl above.
+    await _api.mainDiscover();
+    await _api.mainLoadLanPeers();
+  }
+
+  @override
   Future<void> setPeerAlias(String peerId, String? alias) async {
     await _api.mainSetPeerAlias(id: peerId.replaceAll(' ', ''), alias: alias ?? '');
   }
@@ -446,7 +477,7 @@ class RealBridge implements Bridge {
   Stream<ConnectEvent> connectEvents() => _connectEvents.stream;
 
   @override
-  Future<void> connect(String peerId) async {
+  Future<void> connect(String peerId, {String? mode}) async {
     final cleanId = peerId.replaceAll(' ', '');
     final sid = const Uuid().v4obj();
     _currentSessionId = sid;
@@ -463,14 +494,17 @@ class RealBridge implements Bridge {
     );
     _connectEvents.add(ConnectEvent(peer: peer, stage: ConnectStage.resolving));
     try {
+      // Map ConnectMode wire-value → upstream sessionAddSync flags. Only
+      // one of these can be true at a time (RustDesk core treats them as
+      // distinct session types). Unknown / null mode → full-control default.
       _api.sessionAddSync(
         sessionId: sid,
         id: cleanId,
-        isFileTransfer: false,
+        isFileTransfer: mode == 'file-transfer',
         isViewCamera: false,
-        isPortForward: false,
-        isRdp: false,
-        isTerminal: false,
+        isPortForward: mode == 'port-forward',
+        isRdp: mode == 'rdp',
+        isTerminal: mode == 'terminal',
         switchUuid: '',
         forceRelay: false,
         password: '',
@@ -548,6 +582,14 @@ class RealBridge implements Bridge {
     await _api.sessionRecordScreen(sessionId: sid, start: next);
     _session = _session.copyWith(recording: next);
     _sessionState.add(_session);
+  }
+
+  @override
+  Future<void> setDisplayFit(DisplayFit fit) async {
+    _session = _session.copyWith(fit: fit);
+    _sessionState.add(_session);
+    // Persist as a session option so the choice sticks for next launch.
+    await _api.mainSetOption(key: 'godesk-display-fit', value: fit.name);
   }
 
   @override
@@ -686,7 +728,29 @@ class RealBridge implements Bridge {
   Future<void> setOption(String key, String value) =>
       _api.mainSetOption(key: key, value: value);
 
-  // ─── Invite link (local only) ─────────────────────────────────────────
+  // ─── Invite links (local only) ────────────────────────────────────────
+
+  static const String _kInvitesKey = 'godesk-invite-links';
+
+  @override
+  Future<List<InviteLink>> listInviteLinks() async {
+    final raw = await _api.mainGetOption(key: _kInvitesKey);
+    return InviteLink.decodeAll(raw);
+  }
+
+  @override
+  Future<void> addInviteLink(InviteLink link) async {
+    final list = await listInviteLinks();
+    final next = <InviteLink>[...list, link];
+    await _api.mainSetOption(key: _kInvitesKey, value: InviteLink.encodeAll(next));
+  }
+
+  @override
+  Future<void> removeInviteLink(String id) async {
+    final list = await listInviteLinks();
+    final next = list.where((l) => l.id != id).toList();
+    await _api.mainSetOption(key: _kInvitesKey, value: InviteLink.encodeAll(next));
+  }
 
   @override
   String inviteLink({required String id, required String otp}) {
@@ -701,6 +765,7 @@ class RealBridge implements Bridge {
   void dispose() {
     _globalSub?.cancel();
     _sessionSub?.cancel();
+    _lanPeersCtl.close();
     _peers.close();
     _diagnostics.close();
     _connectEvents.close();

@@ -16,12 +16,14 @@ class ConnectingOverlay extends StatefulWidget {
     required this.peerId,
     required this.onCancel,
     required this.onComplete,
+    this.mode,
     super.key,
   });
 
   final String peerId;
   final VoidCallback onCancel;
   final VoidCallback onComplete;
+  final String? mode;
 
   @override
   State<ConnectingOverlay> createState() => _ConnectingOverlayState();
@@ -53,7 +55,7 @@ class _ConnectingOverlayState extends State<ConnectingOverlay>
     // Trigger the bridge to start the connect flow once.
     if (!_started) {
       _started = true;
-      BridgeProvider.of(context).connect(widget.peerId);
+      BridgeProvider.of(context).connect(widget.peerId, mode: widget.mode);
     }
   }
 

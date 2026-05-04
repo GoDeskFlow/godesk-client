@@ -11,6 +11,7 @@
 
 import 'dart:async';
 
+import '../data/invite_link.dart';
 import '../data/peers.dart';
 import '../data/transfers.dart';
 
@@ -55,6 +56,12 @@ class ChatMessage {
   final DateTime time;
 }
 
+/// How the remote frame is sized inside the session viewport.
+/// - [original]: 1:1 native pixels, scrollable if larger than viewport.
+/// - [fit]: aspect-preserving fit (current default — letterbox/pillarbox).
+/// - [stretch]: fill the viewport, breaks aspect ratio.
+enum DisplayFit { fit, original, stretch }
+
 /// Reactive state of the *active* remote session. `peerId == null` ⇒ no session.
 class SessionState {
   const SessionState({
@@ -65,6 +72,7 @@ class SessionState {
     this.textureId,
     this.frameWidth = 0,
     this.frameHeight = 0,
+    this.fit = DisplayFit.fit,
   });
 
   final String? peerId;
@@ -84,6 +92,7 @@ class SessionState {
   /// with the correct aspect ratio.
   final int frameWidth;
   final int frameHeight;
+  final DisplayFit fit;
 
   bool get inSession => peerId != null;
   bool get hasFrame => textureId != null && textureId != -1;
@@ -98,6 +107,7 @@ class SessionState {
     bool? clearTexture,
     int? frameWidth,
     int? frameHeight,
+    DisplayFit? fit,
   }) {
     return SessionState(
       peerId: (clearPeer ?? false) ? null : peerId ?? this.peerId,
@@ -107,6 +117,7 @@ class SessionState {
       textureId: (clearTexture ?? false) ? null : textureId ?? this.textureId,
       frameWidth: frameWidth ?? this.frameWidth,
       frameHeight: frameHeight ?? this.frameHeight,
+      fit: fit ?? this.fit,
     );
   }
 }
@@ -128,6 +139,16 @@ abstract class Bridge {
   Future<void> forgetPeer(String id);
   Future<void> setPeerAlias(String peerId, String? alias);
 
+  // — LAN discovery (RuDesktop "Найдено" tab parity) —
+  /// Stream of peers found by the local mDNS/SSDP discovery sweep. Updates
+  /// arrive whenever the Rust core publishes a new `load_lan_peers` event.
+  Stream<List<Peer>> lanPeers();
+
+  /// Fire-and-forget trigger to start a fresh LAN discovery sweep. The
+  /// Rust core blasts an SSDP probe and listens for replies; results
+  /// flow back via [lanPeers].
+  Future<void> triggerLanDiscovery();
+
   /// Per-peer connection presets (image quality, mode, audio).
   /// Reads/writes are persisted opaquely; key/value strings only.
   Future<void> setPeerOption(String peerId, String key, String value);
@@ -142,7 +163,10 @@ abstract class Bridge {
 
   // — Connect / disconnect —
   Stream<ConnectEvent> connectEvents();
-  Future<void> connect(String peerId);
+  /// Optional [mode] selects RustDesk session args. Wire values:
+  /// `view-only` / `full-control` / `file-transfer` / `port-forward` /
+  /// `rdp` / `terminal`. Default behavior matches `full-control`.
+  Future<void> connect(String peerId, {String? mode});
   Future<void> cancelConnect();
   Future<void> disconnect();
 
@@ -152,6 +176,7 @@ abstract class Bridge {
   Future<void> toggleVoiceCall();
   Future<void> toggleRecording();
   Future<void> togglePrivacyMode(String key);
+  Future<void> setDisplayFit(DisplayFit fit);
 
   // — In-session text chat —
   Stream<ChatMessage> chatEvents();
@@ -189,6 +214,15 @@ abstract class Bridge {
   /// Build a shareable URL like `https://godeskflow.com/c/<base64(id|otp)>`.
   /// Receiver clicking should open GoDesk and prefill the connect form.
   String inviteLink({required String id, required String otp});
+
+  /// List of all generated invite links, persisted across launches.
+  Future<List<InviteLink>> listInviteLinks();
+
+  /// Append a new invite link to the persisted list.
+  Future<void> addInviteLink(InviteLink link);
+
+  /// Remove an invite link by id.
+  Future<void> removeInviteLink(String id);
 
   // — Persisted settings ───────────────────────────────────────────────
   /// Read a global option by key. Returns empty string if unset (matches

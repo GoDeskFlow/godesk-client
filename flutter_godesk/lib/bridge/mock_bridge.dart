@@ -21,6 +21,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import '../data/invite_link.dart';
 import '../data/peers.dart';
 import '../data/transfers.dart';
 import '../util/format.dart';
@@ -156,6 +157,20 @@ class MockBridge implements Bridge {
     _peers.add(_peersSnapshot);
   }
 
+  final StreamController<List<Peer>> _lanPeers =
+      StreamController<List<Peer>>.broadcast(
+    onListen: null, // populated lazily in lanPeers()
+  );
+
+  @override
+  Stream<List<Peer>> lanPeers() => _lanPeers.stream;
+
+  @override
+  Future<void> triggerLanDiscovery() async {
+    // Mock: nothing to discover on a fake LAN.
+    _lanPeers.add(const <Peer>[]);
+  }
+
   @override
   Future<void> setPeerAlias(String peerId, String? alias) async {
     final i = _peerList.indexWhere((p) => p.id == peerId);
@@ -202,7 +217,7 @@ class MockBridge implements Bridge {
   Stream<ConnectEvent> connectEvents() => _connectEvents.stream;
 
   @override
-  Future<void> connect(String peerId) async {
+  Future<void> connect(String peerId, {String? mode}) async {
     if (_demoMode) {
       // Demo: walk through all 4 stages successfully.
       final peer = recentPeers.firstWhere(
@@ -281,6 +296,12 @@ class MockBridge implements Bridge {
   @override
   Future<void> toggleRecording() async {
     _session = _session.copyWith(recording: !_session.recording);
+    _sessionState.add(_session);
+  }
+
+  @override
+  Future<void> setDisplayFit(DisplayFit fit) async {
+    _session = _session.copyWith(fit: fit);
     _sessionState.add(_session);
   }
 
@@ -372,6 +393,18 @@ class MockBridge implements Bridge {
   }) async {}
 
   final Map<String, String> _options = <String, String>{};
+  final List<InviteLink> _invites = <InviteLink>[];
+
+  @override
+  Future<List<InviteLink>> listInviteLinks() async =>
+      List<InviteLink>.unmodifiable(_invites);
+
+  @override
+  Future<void> addInviteLink(InviteLink link) async => _invites.add(link);
+
+  @override
+  Future<void> removeInviteLink(String id) async =>
+      _invites.removeWhere((l) => l.id == id);
 
   @override
   Future<String> getOption(String key) async => _options[key] ?? '';
@@ -395,6 +428,7 @@ class MockBridge implements Bridge {
   @override
   void dispose() {
     _ticker?.cancel();
+    _lanPeers.close();
     _peers.close();
     _diagnostics.close();
     _connectEvents.close();

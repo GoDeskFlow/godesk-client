@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import '../bridge/bridge.dart';
 import '../bridge/provider.dart';
 import '../data/peers.dart';
+import 'invite_manager.dart';
 import '../kit/_internal/inset_painter.dart';
 import '../kit/dashed_divider.dart';
 import '../kit/lcd_panel.dart';
@@ -23,7 +24,10 @@ import '../util/format.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({required this.onConnect, super.key});
-  final ValueChanged<Peer> onConnect;
+  // `mode` is the ConnectMode wire-value (e.g. 'full-control', 'rdp').
+  // Keep it as an opaque string here so godesk_app.dart doesn't need to
+  // import ConnectMode for typing the callback.
+  final void Function(Peer peer, {String? mode}) onConnect;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -40,8 +44,12 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _showPw = false;
   bool _copiedId = false;
   bool _copiedPw = false;
-  bool _copiedInvite = false;
   ConnectMode _mode = ConnectMode.fullControl;
+
+  // Address-book sub-tab: 'saved' = persisted peer DB, 'lan' = mDNS sweep.
+  String _abTab = 'saved';
+  List<Peer> _lanPeers = const <Peer>[];
+  StreamSubscription<List<Peer>>? _lanSub;
 
   Bridge get _bridge => BridgeProvider.of(context);
 
@@ -67,6 +75,9 @@ class _HomeScreenState extends State<HomeScreen> {
     _diagSub ??= _bridge.diagnostics().listen((d) {
       if (mounted) setState(() => _diagnostics = d);
     });
+    _lanSub ??= _bridge.lanPeers().listen((peers) {
+      if (mounted) setState(() => _lanPeers = peers);
+    });
   }
 
   @override
@@ -74,6 +85,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _peerInput.dispose();
     _searchInput.dispose();
     _diagSub?.cancel();
+    _lanSub?.cancel();
     super.dispose();
   }
 
@@ -94,14 +106,16 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  void _copyInvite() {
+  Future<void> _openInviteManager() async {
     if (_identity == null || _password.isEmpty) return;
-    final link = _bridge.inviteLink(id: _identity!.id, otp: _password);
-    Clipboard.setData(ClipboardData(text: link));
-    setState(() => _copiedInvite = true);
-    Future<void>.delayed(const Duration(milliseconds: 1400), () {
-      if (mounted) setState(() => _copiedInvite = false);
-    });
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => InviteManagerDialog(
+        bridge: _bridge,
+        id: _identity!.id,
+        otp: _password,
+      ),
+    );
   }
 
   Future<void> _editAlias(Peer peer) async {
@@ -197,7 +211,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // Persist the chosen mode as a per-peer option so RealBridge can read it
     // when launching the session.
     _bridge.setPeerOption(peer.id, 'mode', _mode.wireValue);
-    widget.onConnect(peer);
+    widget.onConnect(peer, mode: _mode.wireValue);
   }
 
 
@@ -291,14 +305,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(width: 6),
                   Expanded(
                     child: TactileButton(
-                      onPressed: _identity == null || _password.isEmpty ? null : _copyInvite,
-                      child: Row(
+                      onPressed: _identity == null || _password.isEmpty ? null : _openInviteManager,
+                      child: const Row(
                         mainAxisSize: MainAxisSize.min,
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: <Widget>[
-                          const Icon(Icons.link, size: 12),
-                          const SizedBox(width: 4),
-                          Text(_copiedInvite ? 'LINK COPIED' : 'INVITE LINK'),
+                          Icon(Icons.link, size: 12),
+                          SizedBox(width: 4),
+                          Text('INVITE LINKS'),
                         ],
                       ),
                     ),
@@ -498,13 +512,19 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
               const SizedBox(height: 10),
-              Row(
+              // Six connection modes — three primary + three RuDesktop-style
+              // advanced (TCP / RDP / Terminal). Wrap so they reflow on
+              // narrow viewports instead of clipping.
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
                 children: <Widget>[
                   _modeChip(t, 'View only', ConnectMode.viewOnly),
-                  const SizedBox(width: 6),
                   _modeChip(t, 'Full control', ConnectMode.fullControl),
-                  const SizedBox(width: 6),
                   _modeChip(t, 'File transfer', ConnectMode.fileTransfer),
+                  _modeChip(t, 'TCP tunnel', ConnectMode.portForward),
+                  _modeChip(t, 'RDP', ConnectMode.rdp),
+                  _modeChip(t, 'Terminal', ConnectMode.terminal),
                 ],
               ),
             ],
@@ -590,12 +610,28 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: <Widget>[
                   Row(
                     children: <Widget>[
-                      const SectionLabel('Address Book'),
+                      _abTabPill(t, label: 'SAVED', tab: 'saved'),
+                      const SizedBox(width: 6),
+                      _abTabPill(t, label: 'LAN', tab: 'lan'),
                       const Spacer(),
-                      _entriesPlate(t),
+                      if (_abTab == 'lan')
+                        TactileButton(
+                          small: true,
+                          onPressed: () => _bridge.triggerLanDiscovery(),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: <Widget>[
+                              Icon(Icons.refresh, size: 11),
+                              SizedBox(width: 4),
+                              Text('SCAN'),
+                            ],
+                          ),
+                        )
+                      else
+                        _entriesPlate(t),
                     ],
                   ),
-                  if (_peers.isNotEmpty) ...<Widget>[
+                  if (_abTab == 'saved' && _peers.isNotEmpty) ...<Widget>[
                     const SizedBox(height: 8),
                     _searchBar(t),
                   ],
@@ -603,7 +639,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             Expanded(
-              child: _buildPeerList(t),
+              child: _abTab == 'lan' ? _buildLanList(t) : _buildPeerList(t),
             ),
           ],
         ),
@@ -685,6 +721,72 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _abTabPill(GoDeskTheme t, {required String label, required String tab}) {
+    final active = _abTab == tab;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() => _abTab = tab),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            gradient: active
+                ? LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: <Color>[t.accent, t.accentDark],
+                  )
+                : null,
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: active ? t.accentDark : t.border),
+          ),
+          child: Text(
+            label,
+            style: GDtype.wordmark(
+              size: 9,
+              color: active ? Colors.white : t.subtle,
+              trackingEm: 0.08,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLanList(GoDeskTheme t) {
+    if (_lanPeers.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: <Widget>[
+              Icon(Icons.lan_outlined, size: 32, color: t.subtle.withValues(alpha: 0.5)),
+              const SizedBox(height: 10),
+              Text('No LAN peers found yet',
+                  style: GDtype.ui(size: 12, weight: FontWeight.w600, color: t.body)),
+              const SizedBox(height: 4),
+              Text('Tap SCAN to broadcast a discovery probe.',
+                  textAlign: TextAlign.center,
+                  style: GDtype.ui(size: 10, color: t.subtle).copyWith(height: 1.4)),
+            ],
+          ),
+        ),
+      );
+    }
+    return ListView.builder(
+      padding: EdgeInsets.zero,
+      itemCount: _lanPeers.length,
+      itemBuilder: (context, i) => _PeerRow(
+        peer: _lanPeers[i],
+        isLast: i == _lanPeers.length - 1,
+        onTap: () => widget.onConnect(_lanPeers[i]),
+        onEditAlias: () {}, // LAN peers aren't in the address book yet.
       ),
     );
   }
@@ -940,12 +1042,19 @@ class _TagPlate extends StatelessWidget {
 /// `bridge.setPeerOption(id, 'mode', wireValue)` so the next connect to
 /// the same peer remembers the choice (RuDesktop 2.9.385 parity).
 enum ConnectMode {
-  viewOnly('view-only'),
-  fullControl('full-control'),
-  fileTransfer('file-transfer');
+  viewOnly('view-only', 'View only'),
+  fullControl('full-control', 'Full control'),
+  fileTransfer('file-transfer', 'File transfer'),
+  // Less-common modes mirroring RuDesktop's CONNECT-button dropdown.
+  // FFI maps these onto sessionAddSync flags: isPortForward / isRdp /
+  // isTerminal. Backend support already exists in upstream's flutter_ffi.rs.
+  portForward('port-forward', 'TCP tunnel'),
+  rdp('rdp', 'RDP'),
+  terminal('terminal', 'Terminal');
 
-  const ConnectMode(this.wireValue);
+  const ConnectMode(this.wireValue, this.label);
   final String wireValue;
+  final String label;
 }
 
 class _AddressBookEmpty extends StatelessWidget {

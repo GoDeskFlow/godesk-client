@@ -160,6 +160,7 @@ class _SessionScreenState extends State<SessionScreen> {
                     textureId: _session.textureId!,
                     width: _session.frameWidth,
                     height: _session.frameHeight,
+                    fit: _session.fit,
                   )
                 : DecoratedBox(
                     decoration: BoxDecoration(gradient: bg),
@@ -256,6 +257,28 @@ class _SessionScreenState extends State<SessionScreen> {
                     ),
                     const SizedBox(width: 4),
                     _ToolbarButton(
+                      icon: switch (_session.fit) {
+                        DisplayFit.original => Icons.fit_screen_outlined,
+                        DisplayFit.fit => Icons.aspect_ratio_outlined,
+                        DisplayFit.stretch => Icons.fullscreen,
+                      },
+                      label: switch (_session.fit) {
+                        DisplayFit.original => '1:1',
+                        DisplayFit.fit => 'FIT',
+                        DisplayFit.stretch => 'FILL',
+                      },
+                      onPressed: () {
+                        // Cycle: fit → original → stretch → fit.
+                        final next = switch (_session.fit) {
+                          DisplayFit.fit => DisplayFit.original,
+                          DisplayFit.original => DisplayFit.stretch,
+                          DisplayFit.stretch => DisplayFit.fit,
+                        };
+                        _bridge.setDisplayFit(next);
+                      },
+                    ),
+                    const SizedBox(width: 4),
+                    _ToolbarButton(
                       icon: Icons.lock_outline,
                       label: 'LOCK',
                       onPressed: () {},
@@ -316,11 +339,13 @@ class _RemoteFrame extends StatefulWidget {
     required this.textureId,
     required this.width,
     required this.height,
+    required this.fit,
   });
 
   final int textureId;
   final int width;
   final int height;
+  final DisplayFit fit;
 
   @override
   State<_RemoteFrame> createState() => _RemoteFrameState();
@@ -339,28 +364,47 @@ class _RemoteFrameState extends State<_RemoteFrame> {
   }
 
   /// Map a pointer's local position (in widget space) to remote-screen
-  /// pixel coordinates. The Texture widget is fit inside an AspectRatio
-  /// box, so the displayed area may be letter- or pillar-boxed inside the
-  /// black container. Off-area pointer events are dropped.
+  /// pixel coordinates. The Texture widget can be fit / 1:1 / stretched
+  /// based on `widget.fit`, so the math depends on which mode is active.
+  /// Off-area pointer events (in fit / original modes) are dropped.
   (int, int)? _toRemote(Offset local, BoxConstraints constraints) {
     if (widget.width <= 0 || widget.height <= 0) return null;
-    // Compute the rect occupied by the AspectRatio child within the parent.
-    final parentAspect = constraints.maxWidth / constraints.maxHeight;
-    final remoteAspect = widget.width / widget.height;
+
     double childWidth, childHeight, dx0, dy0;
-    if (parentAspect > remoteAspect) {
-      // Pillar-box: parent wider than remote.
-      childHeight = constraints.maxHeight;
-      childWidth = childHeight * remoteAspect;
-      dx0 = (constraints.maxWidth - childWidth) / 2;
-      dy0 = 0;
-    } else {
-      // Letter-box: parent taller than remote.
-      childWidth = constraints.maxWidth;
-      childHeight = childWidth / remoteAspect;
-      dx0 = 0;
-      dy0 = (constraints.maxHeight - childHeight) / 2;
+    switch (widget.fit) {
+      case DisplayFit.stretch:
+        // Texture fills the parent — no aspect preservation.
+        childWidth = constraints.maxWidth;
+        childHeight = constraints.maxHeight;
+        dx0 = 0;
+        dy0 = 0;
+        break;
+      case DisplayFit.original:
+        // 1:1 native pixels, centred. May overflow viewport (scrollable
+        // wrapper added later).
+        childWidth = widget.width.toDouble();
+        childHeight = widget.height.toDouble();
+        dx0 = (constraints.maxWidth - childWidth) / 2;
+        dy0 = (constraints.maxHeight - childHeight) / 2;
+        break;
+      case DisplayFit.fit:
+        // Aspect-preserving, letterboxed/pillarboxed.
+        final parentAspect = constraints.maxWidth / constraints.maxHeight;
+        final remoteAspect = widget.width / widget.height;
+        if (parentAspect > remoteAspect) {
+          childHeight = constraints.maxHeight;
+          childWidth = childHeight * remoteAspect;
+          dx0 = (constraints.maxWidth - childWidth) / 2;
+          dy0 = 0;
+        } else {
+          childWidth = constraints.maxWidth;
+          childHeight = childWidth / remoteAspect;
+          dx0 = 0;
+          dy0 = (constraints.maxHeight - childHeight) / 2;
+        }
+        break;
     }
+
     final localX = local.dx - dx0;
     final localY = local.dy - dy0;
     if (localX < 0 || localX > childWidth || localY < 0 || localY > childHeight) {
@@ -438,13 +482,35 @@ class _RemoteFrameState extends State<_RemoteFrame> {
                   if (lines != 0) _bridge.sendMouseWheel(-lines);
                 }
               },
-              child: SizedBox.expand(
-                child: AspectRatio(
-                  key: _frameKey,
-                  aspectRatio: widget.width / widget.height,
-                  child: Texture(textureId: widget.textureId),
-                ),
-              ),
+              child: switch (widget.fit) {
+                DisplayFit.stretch => SizedBox.expand(
+                    key: _frameKey,
+                    child: Texture(textureId: widget.textureId),
+                  ),
+                DisplayFit.original => SizedBox.expand(
+                    child: ClipRect(
+                      child: OverflowBox(
+                        minWidth: widget.width.toDouble(),
+                        minHeight: widget.height.toDouble(),
+                        maxWidth: widget.width.toDouble(),
+                        maxHeight: widget.height.toDouble(),
+                        child: SizedBox(
+                          key: _frameKey,
+                          width: widget.width.toDouble(),
+                          height: widget.height.toDouble(),
+                          child: Texture(textureId: widget.textureId),
+                        ),
+                      ),
+                    ),
+                  ),
+                DisplayFit.fit => SizedBox.expand(
+                    child: AspectRatio(
+                      key: _frameKey,
+                      aspectRatio: widget.width / widget.height,
+                      child: Texture(textureId: widget.textureId),
+                    ),
+                  ),
+              },
             ),
           );
         },

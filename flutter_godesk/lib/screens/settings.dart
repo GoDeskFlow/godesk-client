@@ -1,6 +1,8 @@
 // Settings screen — General / Video & Audio / Security / Network / About.
 // Port of godesk-skeuo-screens.jsx → SkeuoSettings.
 
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import '../bridge/bridge.dart';
@@ -10,11 +12,12 @@ import '../kit/knob.dart';
 import '../kit/lcd_panel.dart';
 import '../kit/metal_panel.dart';
 import '../kit/section_label.dart';
+import '../kit/tactile_button.dart';
 import '../kit/toggle.dart';
 import '../theme/godesk_theme.dart';
 import '../theme/typography.dart';
 
-enum SettingsSection { general, video, security, network, about }
+enum SettingsSection { general, video, security, network, defaults, about }
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -49,6 +52,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _numericOtp = false;
 
   bool _persistedLoaded = false;
+
+  /// Soft-gate for the Security tab — prevents accidental flips of dangerous
+  /// permissions (RuDesktop's "Разблокировать настройки" pattern). Toggles
+  /// receive an IgnorePointer + opacity dim while locked. Unlocking is a
+  /// click-confirm; no password gate yet.
+  bool _securityLocked = true;
+
+  // Failover servers — list of alternate rendezvous addresses tried in
+  // order if the primary fails. Persisted as JSON in
+  // `godesk-failover-servers` option.
+  List<String> _failoverServers = const <String>[];
+  final TextEditingController _newFailoverCtl = TextEditingController();
+
+  // "Defaults" section — RuDesktop "Преднастройки" parity. Each toggle
+  // is a key in the bridge options store; applied automatically to new
+  // sessions by RealBridge once it reads them on connect.
+  bool _defShowCursor = true;
+  bool _defMuteAudio = false;
+  bool _defPrivacyMode = false;
+  bool _defLockOnEnd = false;
+  bool _defViewOnly = false;
+  bool _defHideWallpaper = false;
+  bool _defAllowClipboard = true;
+  String _defDisplayFit = 'fit'; // matches DisplayFit.name
 
   Bridge get _bridge => BridgeProvider.of(context);
 
@@ -103,6 +130,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final permFiles = await _readBool('enable-file-transfer', defaultValue: true);
     final permClip = await _readBool('enable-clipboard', defaultValue: false);
     final permAudio = await _readBool('enable-audio', defaultValue: false);
+
+    // Defaults section
+    final defShowCursor = await _readBool('godesk-default-show-cursor', defaultValue: true);
+    final defMuteAudio = await _readBool('godesk-default-mute-audio');
+    final defPrivacyMode = await _readBool('godesk-default-privacy-mode');
+    final defLockOnEnd = await _readBool('godesk-default-lock-on-end');
+    final defViewOnly = await _readBool('godesk-default-view-only');
+    final defHideWallpaper = await _readBool('godesk-default-hide-wallpaper');
+    final defAllowClipboard = await _readBool('godesk-default-clipboard', defaultValue: true);
+    final defFit = await _bridge.getOption('godesk-default-display-fit');
+
+    // Failover servers — JSON-encoded list.
+    final rawFailover = await _bridge.getOption('godesk-failover-servers');
+    final failoverList = rawFailover.isEmpty
+        ? const <String>[]
+        : (jsonDecode(rawFailover) as List<dynamic>).cast<String>();
+
     if (!mounted) return;
     setState(() {
       _autostart = autostart;
@@ -112,7 +156,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _permFiles = permFiles;
       _permClip = permClip;
       _permAudio = permAudio;
+      _defShowCursor = defShowCursor;
+      _defMuteAudio = defMuteAudio;
+      _defPrivacyMode = defPrivacyMode;
+      _defLockOnEnd = defLockOnEnd;
+      _defViewOnly = defViewOnly;
+      _defHideWallpaper = defHideWallpaper;
+      _defAllowClipboard = defAllowClipboard;
+      _defDisplayFit = defFit.isEmpty ? 'fit' : defFit;
+      _failoverServers = failoverList;
     });
+  }
+
+  Future<void> _saveFailover() async {
+    await _bridge.setOption(
+      'godesk-failover-servers',
+      _failoverServers.isEmpty ? '' : jsonEncode(_failoverServers),
+    );
   }
 
   @override
@@ -148,6 +208,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       (SettingsSection.video, 'Video & Audio'),
       (SettingsSection.security, 'Security'),
       (SettingsSection.network, 'Network'),
+      (SettingsSection.defaults, 'Defaults'),
       (SettingsSection.about, 'About'),
     ];
     return MetalPanel(
@@ -172,6 +233,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       SettingsSection.video => _video(t),
       SettingsSection.security => _security(t),
       SettingsSection.network => _network(t),
+      SettingsSection.defaults => _defaults(t),
       SettingsSection.about => _about(t),
     };
   }
@@ -330,6 +392,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _security(GoDeskTheme t) {
     return Column(
       children: <Widget>[
+        // Unlock-gate panel — appears at the top of Security so the user
+        // must explicitly opt in before flipping dangerous toggles.
+        SizedBox(
+          width: double.infinity,
+          child: TactileButton(
+            variant: _securityLocked ? TactileVariant.primary : TactileVariant.defaultStyle,
+            onPressed: () => setState(() => _securityLocked = !_securityLocked),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: <Widget>[
+                Icon(_securityLocked ? Icons.lock_outline : Icons.lock_open_outlined, size: 12),
+                const SizedBox(width: 6),
+                Text(_securityLocked ? 'UNLOCK SECURITY SETTINGS' : 'LOCK'),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        IgnorePointer(
+          ignoring: _securityLocked,
+          child: Opacity(
+            opacity: _securityLocked ? 0.4 : 1.0,
+            child: _securityBody(t),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _securityBody(GoDeskTheme t) {
+    return Column(
+      children: <Widget>[
         MetalPanel(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -422,44 +517,218 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _network(GoDeskTheme t) {
     final relays = <String>['EU West', 'US East', 'Asia', 'Self-hosted'];
-    return MetalPanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          const SectionLabel('Relay Server'),
-          const SizedBox(height: 12),
-          Row(
+    return Column(
+      children: <Widget>[
+        MetalPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              for (var i = 0; i < relays.length; i++) ...<Widget>[
-                Expanded(
-                  child: _SegmentButton(
-                    label: relays[i],
-                    active: _relay == i,
-                    onTap: () => setState(() => _relay = i),
-                  ),
+              const SectionLabel('Relay Server'),
+              const SizedBox(height: 12),
+              Row(
+                children: <Widget>[
+                  for (var i = 0; i < relays.length; i++) ...<Widget>[
+                    Expanded(
+                      child: _SegmentButton(
+                        label: relays[i],
+                        active: _relay == i,
+                        onTap: () => setState(() => _relay = i),
+                      ),
+                    ),
+                    if (i < relays.length - 1) const SizedBox(width: 6),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 12),
+              LCDPanel(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Text(
+                  // All three regions currently fall back to the default
+                  // VPS until Phase 5+ provisions per-region relays.
+                  // Per [ADR-009](decisions.md#adr-009).
+                  _relay == 3
+                      ? 'self-hosted.example.com:${GoDeskInfra.relayPort}'
+                      : '${GoDeskInfra.relayHost}:${GoDeskInfra.relayPort}',
+                  style: lcdReadout(theme: t, size: 11),
                 ),
-                if (i < relays.length - 1) const SizedBox(width: 6),
-              ],
+              ),
             ],
           ),
-          const SizedBox(height: 12),
-          LCDPanel(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: Text(
-              _relay == 0
-                  // EU West not yet provisioned; falls back to default until Phase 5
-                  // adds a true regional relay. Per ADR-009.
-                  ? '${GoDeskInfra.relayHost}:${GoDeskInfra.relayPort}'
-                  : _relay == 1
-                      ? '${GoDeskInfra.relayHost}:${GoDeskInfra.relayPort}'
-                      : _relay == 2
-                          ? '${GoDeskInfra.relayHost}:${GoDeskInfra.relayPort}'
-                          : 'self-hosted.example.com:${GoDeskInfra.relayPort}',
-              style: lcdReadout(theme: t, size: 11),
-            ),
+        ),
+        const SizedBox(height: 12),
+        // RuDesktop "Альтернативные сервера" parity — failover list tried in
+        // order if the primary rendezvous fails to connect.
+        MetalPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const SectionLabel('Alternative servers'),
+              const SizedBox(height: 6),
+              Text(
+                'Tried in order if the primary relay is unreachable.',
+                style: GDtype.ui(size: 10, color: t.subtle).copyWith(height: 1.4),
+              ),
+              const SizedBox(height: 10),
+              for (var i = 0; i < _failoverServers.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: LCDPanel(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          child: Text(_failoverServers[i],
+                              style: lcdReadout(theme: t, size: 11)),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      TactileButton(
+                        small: true,
+                        variant: TactileVariant.danger,
+                        onPressed: () {
+                          setState(() => _failoverServers = <String>[
+                                ..._failoverServers.sublist(0, i),
+                                ..._failoverServers.sublist(i + 1),
+                              ]);
+                          _saveFailover();
+                        },
+                        child: const Icon(Icons.delete_outline, size: 11),
+                      ),
+                    ],
+                  ),
+                ),
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: LCDPanel(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      child: TextField(
+                        controller: _newFailoverCtl,
+                        cursorColor: t.lcdInk,
+                        decoration: InputDecoration(
+                          border: InputBorder.none,
+                          isCollapsed: true,
+                          hintText: 'host:port',
+                          hintStyle: lcdReadout(theme: t, size: 11).copyWith(color: t.lcdDim),
+                        ),
+                        style: lcdReadout(theme: t, size: 11),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  TactileButton(
+                    small: true,
+                    variant: TactileVariant.primary,
+                    onPressed: () {
+                      final v = _newFailoverCtl.text.trim();
+                      if (v.isEmpty) return;
+                      setState(() {
+                        _failoverServers = <String>[..._failoverServers, v];
+                        _newFailoverCtl.clear();
+                      });
+                      _saveFailover();
+                    },
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Icon(Icons.add, size: 12),
+                        SizedBox(width: 4),
+                        Text('ADD'),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
-        ],
-      ),
+        ),
+      ],
+    );
+  }
+
+  Widget _defaults(GoDeskTheme t) {
+    return Column(
+      children: <Widget>[
+        MetalPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const SectionLabel('Connection defaults'),
+              const SizedBox(height: 6),
+              Text(
+                'Applied to every new session unless the peer overrides.',
+                style: GDtype.ui(size: 10, color: t.subtle).copyWith(height: 1.4),
+              ),
+              const SizedBox(height: 12),
+              _toggleRow('Show remote cursor', _defShowCursor, (v) {
+                setState(() => _defShowCursor = v);
+                _writeBool('godesk-default-show-cursor', v);
+              }, t),
+              const SizedBox(height: 8),
+              _toggleRow('Mute audio', _defMuteAudio, (v) {
+                setState(() => _defMuteAudio = v);
+                _writeBool('godesk-default-mute-audio', v);
+              }, t),
+              const SizedBox(height: 8),
+              _toggleRow('Privacy mode', _defPrivacyMode, (v) {
+                setState(() => _defPrivacyMode = v);
+                _writeBool('godesk-default-privacy-mode', v);
+              }, t),
+              const SizedBox(height: 8),
+              _toggleRow('Lock remote on session end', _defLockOnEnd, (v) {
+                setState(() => _defLockOnEnd = v);
+                _writeBool('godesk-default-lock-on-end', v);
+              }, t),
+              const SizedBox(height: 8),
+              _toggleRow('View only by default', _defViewOnly, (v) {
+                setState(() => _defViewOnly = v);
+                _writeBool('godesk-default-view-only', v);
+              }, t),
+              const SizedBox(height: 8),
+              _toggleRow('Hide remote wallpaper', _defHideWallpaper, (v) {
+                setState(() => _defHideWallpaper = v);
+                _writeBool('godesk-default-hide-wallpaper', v);
+              }, t),
+              const SizedBox(height: 8),
+              _toggleRow('Allow clipboard sharing', _defAllowClipboard, (v) {
+                setState(() => _defAllowClipboard = v);
+                _writeBool('godesk-default-clipboard', v);
+              }, t),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        MetalPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const SectionLabel('Display fit (default)'),
+              const SizedBox(height: 12),
+              Row(
+                children: <Widget>[
+                  for (final fit in const <(String, String)>[
+                    ('fit', 'Fit'),
+                    ('original', '1:1'),
+                    ('stretch', 'Stretch'),
+                  ]) ...<Widget>[
+                    Expanded(
+                      child: _SegmentButton(
+                        label: fit.$2,
+                        active: _defDisplayFit == fit.$1,
+                        onTap: () {
+                          setState(() => _defDisplayFit = fit.$1);
+                          _bridge.setOption('godesk-default-display-fit', fit.$1);
+                        },
+                      ),
+                    ),
+                    if (fit.$1 != 'stretch') const SizedBox(width: 6),
+                  ],
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
