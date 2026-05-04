@@ -182,6 +182,11 @@ abstract class Bridge {
   Stream<ChatMessage> chatEvents();
   Future<void> sendChat(String text);
 
+  /// Stream of transient system notices the UI should surface as toasts —
+  /// UAC required on remote, permission denied, peer reconnected, etc.
+  /// Bodies are pre-formatted, ready to drop into a SnackBar.
+  Stream<String> systemNotices();
+
   // — Remote input (mouse + keyboard) —
   /// Cursor moved to absolute remote-screen coordinates `(x, y)`.
   Future<void> sendMouseMove(int x, int y);

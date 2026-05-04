@@ -46,6 +46,7 @@ class _SessionScreenState extends State<SessionScreen> {
   int _unread = 0;
   final List<ChatMessage> _messages = <ChatMessage>[];
   StreamSubscription<ChatMessage>? _chatSub;
+  StreamSubscription<String>? _noticeSub;
   SessionState _session = const SessionState();
   StreamSubscription<SessionState>? _stateSub;
   bool _wired = false;
@@ -68,12 +69,28 @@ class _SessionScreenState extends State<SessionScreen> {
       if (!mounted) return;
       setState(() => _session = s);
     });
+    _noticeSub = _bridge.systemNotices().listen((msg) {
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(
+          duration: const Duration(milliseconds: 3500),
+          content: Row(
+            children: <Widget>[
+              const Icon(Icons.info_outline, size: 16, color: Colors.white),
+              const SizedBox(width: 8),
+              Expanded(child: Text(msg)),
+            ],
+          ),
+        ),
+      );
+    });
   }
 
   @override
   void dispose() {
     _chatSub?.cancel();
     _stateSub?.cancel();
+    _noticeSub?.cancel();
     super.dispose();
   }
 

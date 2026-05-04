@@ -320,6 +320,12 @@ class MockBridge implements Bridge {
   @override
   Stream<ChatMessage> chatEvents() => _chatEvents.stream;
 
+  final StreamController<String> _systemNoticesCtl =
+      StreamController<String>.broadcast();
+
+  @override
+  Stream<String> systemNotices() => _systemNoticesCtl.stream;
+
   @override
   Future<void> sendChat(String text) async {
     if (text.trim().isEmpty) return;
@@ -429,6 +435,7 @@ class MockBridge implements Bridge {
   void dispose() {
     _ticker?.cancel();
     _lanPeers.close();
+    _systemNoticesCtl.close();
     _peers.close();
     _diagnostics.close();
     _connectEvents.close();

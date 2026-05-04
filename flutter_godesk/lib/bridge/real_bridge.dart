@@ -93,6 +93,11 @@ class RealBridge implements Bridge {
       StreamController<ConnectEvent>.broadcast();
   final StreamController<ChatMessage> _chatEvents =
       StreamController<ChatMessage>.broadcast();
+  final StreamController<String> _systemNoticesCtl =
+      StreamController<String>.broadcast();
+
+  @override
+  Stream<String> systemNotices() => _systemNoticesCtl.stream;
 
   StreamSubscription<String>? _globalSub;
   StreamSubscription<EventToUI>? _sessionSub;
@@ -231,6 +236,20 @@ class RealBridge implements Bridge {
     final type = body['type']?.toString() ?? '';
     final title = body['title']?.toString() ?? '';
     final text = body['text']?.toString() ?? '';
+
+    // Surface as a system notice for the SessionScreen toast layer —
+    // covers UAC-needed, permission-denied, peer-reconnected, file-
+    // transfer-error, etc. Anything that's an error / warning gets
+    // forwarded; non-error msgboxes stay quiet.
+    final notice = text.isEmpty ? title : text;
+    if (notice.isNotEmpty &&
+        (type == 'error' ||
+            type == 'warning' ||
+            type == 'uac' ||
+            type == 'permission')) {
+      _systemNoticesCtl.add(notice);
+    }
+
     if (_currentSessionId == null) return;
     final stage = type == 'success' || title.toLowerCase().contains('connected')
         ? ConnectStage.connected
@@ -245,7 +264,7 @@ class RealBridge implements Bridge {
         status: PeerStatus.online,
       ),
       stage: stage,
-      message: text.isEmpty ? title : text,
+      message: notice,
     ));
   }
 
@@ -765,6 +784,7 @@ class RealBridge implements Bridge {
   void dispose() {
     _globalSub?.cancel();
     _sessionSub?.cancel();
+    _systemNoticesCtl.close();
     _lanPeersCtl.close();
     _peers.close();
     _diagnostics.close();
