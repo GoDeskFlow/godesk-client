@@ -1,7 +1,7 @@
 name: flutter_godesk
 description: GoDesk skeuomorphic UI — sibling package replacing upstream client/flutter.
 publish_to: 'none'
-version: 0.1.11+11
+version: 0.2.0+20
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -18,6 +18,11 @@ dependencies:
   # package as well. Pinned to upstream's exact versions.
   ffi: ^2.1.0
   flutter_rust_bridge: 1.80.1
+  # Generated bridge passes session IDs as UuidValue (from `uuid` package).
+  # flutter_rust_bridge 1.80.1 pins uuid ^3.0.6 — must match.
+  uuid: ^3.0.6
+  # Generated bridge uses freezed annotations for sealed EventToUI variants.
+  freezed_annotation: ^2.4.4
   # Phase 2.3 final — production polish on Windows
   tray_manager: ^0.2.4         # system tray icon + menu (minimise-to-tray)
   window_manager: ^0.4.3       # show/hide/restore window from tray
@@ -28,6 +33,14 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^4.0.0
   ffigen: ^8.0.2
+  # flutter_rust_bridge_codegen invokes `flutter pub run build_runner build`
+  # after generating the Dart FFI surface, to produce the platform-specific
+  # bridge_generated.io.dart / .web.dart split files. Required even though
+  # we only target Windows — codegen aborts without it.
+  build_runner: ^2.4.13
+  # ffi_generator emits the IO impl from generated_bridge.dart annotations.
+  freezed: ^2.5.7
+  json_serializable: ^6.8.0
 
 flutter:
   # Bundles MaterialIcons-Regular.otf so `Icons.X` glyphs (content_copy,

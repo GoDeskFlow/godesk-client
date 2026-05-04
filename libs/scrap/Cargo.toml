@@ -48,7 +48,11 @@ quest = "0.3"
 
 [build-dependencies]
 target_build_utils = "0.3"
-bindgen = "0.65"
+# bindgen 0.65 emits opaque `pub struct vpx_codec_enc_cfg { _address: u8 }`
+# when parsing libvpx 1.15.2 headers via libclang 19+ (winget LLVM default).
+# Newer bindgen handles libclang 19's AST changes correctly; 0.71 is what
+# kcp-sys already pulls into the workspace, so no extra version conflict.
+bindgen = "0.71"
 pkg-config = { version = "0.3.27", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]

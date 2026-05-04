@@ -6,9 +6,18 @@ import 'app/godesk_app.dart';
 import 'bridge/bridge.dart';
 import 'bridge/mock_bridge.dart';
 import 'bridge/provider.dart';
+import 'bridge/real_bridge.dart';
 import 'theme/godesk_theme.dart';
 import 'theme/tweaks.dart';
 import 'util/platform_polish.dart';
+
+/// Compile-time switch: build with
+///   `flutter build windows --release --dart-define=GODESK_REAL_BRIDGE=true`
+/// to use the production FFI bridge (loads librustdesk.dll). Default is
+/// `MockBridge` so `flutter run` from a fresh checkout still works without
+/// a Rust core build.
+const bool _kUseRealBridge =
+    bool.fromEnvironment('GODESK_REAL_BRIDGE', defaultValue: false);
 
 Future<void> main() async {
   // Single-instance lock first — if a copy is already running, exit before
@@ -20,10 +29,9 @@ Future<void> main() async {
   await tray.init();
 
   final controller = await TweaksController.create();
-  // Phase 2.4 swap point: replace `MockBridge()` with `RealBridge()` once
-  // the FFI codegen + wiring is complete. UI code reads through the
-  // `Bridge` abstraction so no screen needs to change.
-  final Bridge bridge = MockBridge();
+  // Phase 2.4 wired: GODESK_REAL_BRIDGE=true → real FFI to librustdesk.dll;
+  // unset → MockBridge (current default for clean development checkouts).
+  final Bridge bridge = _kUseRealBridge ? RealBridge() : MockBridge();
   runApp(GoDeskApp(controller: controller, bridge: bridge));
 }
 
