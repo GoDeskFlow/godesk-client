@@ -22,6 +22,13 @@ import '../theme/godesk_theme.dart';
 import '../theme/typography.dart';
 import '../util/format.dart';
 
+/// Address-book ordering. Persisted under `godesk-peer-sort`.
+enum PeerSort {
+  recent,        // Source order (most-recently-seen first; default).
+  name,          // Alphabetical by displayName.
+  favoritesFirst // Favorites at the top, then alphabetical.
+}
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({required this.onConnect, super.key});
   // `mode` is the ConnectMode wire-value (e.g. 'full-control', 'rdp').
@@ -51,16 +58,62 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Peer> _lanPeers = const <Peer>[];
   StreamSubscription<List<Peer>>? _lanSub;
 
+  // Address book sort order. Loaded from `godesk-peer-sort` on first build.
+  PeerSort _sort = PeerSort.recent;
+  bool _sortLoaded = false;
+
   Bridge get _bridge => BridgeProvider.of(context);
 
   /// Filter peers by [_searchInput] — matches displayName, tag, or id (case-insensitive).
+  /// Then sort by [_sort].
   List<Peer> get _visiblePeers {
     final q = _searchInput.text.trim().toLowerCase();
-    if (q.isEmpty) return _peers;
-    return _peers.where((p) {
-      final hay = '${p.displayName} ${p.tag} ${p.id}'.toLowerCase();
-      return hay.contains(q);
-    }).toList();
+    final filtered = q.isEmpty
+        ? List<Peer>.of(_peers)
+        : _peers.where((p) {
+            final hay = '${p.displayName} ${p.tag} ${p.id}'.toLowerCase();
+            return hay.contains(q);
+          }).toList();
+    return _applySort(filtered);
+  }
+
+  List<Peer> _applySort(List<Peer> src) {
+    switch (_sort) {
+      case PeerSort.recent:
+        return src;
+      case PeerSort.name:
+        src.sort((a, b) =>
+            a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()));
+        return src;
+      case PeerSort.favoritesFirst:
+        src.sort((a, b) {
+          if (a.fav != b.fav) return a.fav ? -1 : 1;
+          return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
+        });
+        return src;
+    }
+  }
+
+  Future<void> _loadSort() async {
+    if (_sortLoaded) return;
+    _sortLoaded = true;
+    final raw = await _bridge.getOption('godesk-peer-sort');
+    if (!mounted) return;
+    final next = switch (raw) {
+      'name' => PeerSort.name,
+      'favoritesFirst' => PeerSort.favoritesFirst,
+      _ => PeerSort.recent,
+    };
+    if (next != _sort) setState(() => _sort = next);
+  }
+
+  void _setSort(PeerSort s) {
+    setState(() => _sort = s);
+    _bridge.setOption('godesk-peer-sort', switch (s) {
+      PeerSort.recent => '',
+      PeerSort.name => 'name',
+      PeerSort.favoritesFirst => 'favoritesFirst',
+    });
   }
 
   @override
@@ -78,6 +131,8 @@ class _HomeScreenState extends State<HomeScreen> {
     _lanSub ??= _bridge.lanPeers().listen((peers) {
       if (mounted) setState(() => _lanPeers = peers);
     });
+    _loadRecentIds();
+    _loadSort();
   }
 
   @override
@@ -211,7 +266,29 @@ class _HomeScreenState extends State<HomeScreen> {
     // Persist the chosen mode as a per-peer option so RealBridge can read it
     // when launching the session.
     _bridge.setPeerOption(peer.id, 'mode', _mode.wireValue);
+    // Push to "recent IDs" history so the dropdown next to CONNECT can
+    // suggest it. Keep MRU order, dedup, cap at 8.
+    _pushRecentId(formatted);
     widget.onConnect(peer, mode: _mode.wireValue);
+  }
+
+  static const int _maxRecentIds = 8;
+  List<String> _recentIds = const <String>[];
+
+  Future<void> _loadRecentIds() async {
+    final raw = await _bridge.getOption('godesk-recent-ids');
+    if (raw.isEmpty) return;
+    if (!mounted) return;
+    setState(() {
+      _recentIds = raw.split('\n').where((s) => s.isNotEmpty).toList();
+    });
+  }
+
+  Future<void> _pushRecentId(String id) async {
+    final next = <String>[id, ..._recentIds.where((e) => e != id)];
+    if (next.length > _maxRecentIds) next.removeLast();
+    setState(() => _recentIds = next);
+    await _bridge.setOption('godesk-recent-ids', next.join('\n'));
   }
 
 
@@ -492,6 +569,44 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                   ),
+                  // Recent-IDs dropdown — RuDesktop "Последние сеансы" parity
+                  // surfaced as a compact button on the connect input.
+                  if (_recentIds.isNotEmpty) ...<Widget>[
+                    const SizedBox(width: 6),
+                    PopupMenuButton<String>(
+                      tooltip: 'Recent IDs',
+                      offset: const Offset(0, 38),
+                      onSelected: (id) {
+                        _peerInput.value = TextEditingValue(
+                          text: id,
+                          selection: TextSelection.collapsed(offset: id.length),
+                        );
+                        setState(() {});
+                        _attemptConnect();
+                      },
+                      itemBuilder: (ctx) => <PopupMenuEntry<String>>[
+                        for (final id in _recentIds)
+                          PopupMenuItem<String>(
+                            value: id,
+                            child: Text(id, style: GDtype.mono(size: 12)),
+                          ),
+                      ],
+                      child: Container(
+                        height: 40,
+                        width: 40,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: <Color>[t.panelHi, t.panel],
+                          ),
+                          borderRadius: BorderRadius.circular(5),
+                          border: Border.all(color: t.border),
+                        ),
+                        child: Icon(Icons.history, size: 16, color: t.body),
+                      ),
+                    ),
+                  ],
                   const SizedBox(width: 8),
                   SizedBox(
                     width: 130,
@@ -627,8 +742,11 @@ class _HomeScreenState extends State<HomeScreen> {
                             ],
                           ),
                         )
-                      else
+                      else ...<Widget>[
+                        _sortMenu(t),
+                        const SizedBox(width: 6),
                         _entriesPlate(t),
+                      ],
                     ],
                   ),
                   if (_abTab == 'saved' && _peers.isNotEmpty) ...<Widget>[
@@ -641,6 +759,59 @@ class _HomeScreenState extends State<HomeScreen> {
             Expanded(
               child: _abTab == 'lan' ? _buildLanList(t) : _buildPeerList(t),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _sortMenu(GoDeskTheme t) {
+    final label = switch (_sort) {
+      PeerSort.recent => 'RECENT',
+      PeerSort.name => 'A → Z',
+      PeerSort.favoritesFirst => 'FAVS',
+    };
+    return PopupMenuButton<PeerSort>(
+      tooltip: 'Sort address book',
+      onSelected: _setSort,
+      offset: const Offset(0, 24),
+      itemBuilder: (_) => <PopupMenuEntry<PeerSort>>[
+        CheckedPopupMenuItem<PeerSort>(
+          value: PeerSort.recent,
+          checked: _sort == PeerSort.recent,
+          child: const Text('Most recent'),
+        ),
+        CheckedPopupMenuItem<PeerSort>(
+          value: PeerSort.name,
+          checked: _sort == PeerSort.name,
+          child: const Text('Name (A → Z)'),
+        ),
+        CheckedPopupMenuItem<PeerSort>(
+          value: PeerSort.favoritesFirst,
+          checked: _sort == PeerSort.favoritesFirst,
+          child: const Text('Favorites first'),
+        ),
+      ],
+      child: Container(
+        height: 22,
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        decoration: BoxDecoration(
+          color: t.bg,
+          borderRadius: BorderRadius.circular(3),
+          border: Border.all(color: t.border),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(Icons.swap_vert, size: 11, color: t.subtle),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: GDtype.mono(
+                  size: 9, weight: FontWeight.w700, color: t.subtle, letterSpacing: 0.5),
+            ),
+            const SizedBox(width: 2),
+            Icon(Icons.arrow_drop_down, size: 12, color: t.subtle),
           ],
         ),
       ),
@@ -1072,12 +1243,12 @@ class _AddressBookEmpty extends StatelessWidget {
             Icon(Icons.contact_phone_outlined, size: 32, color: theme.subtle.withValues(alpha: 0.5)),
             const SizedBox(height: 10),
             Text(
-              "No saved peers yet",
+              'No saved peers yet',
               style: GDtype.ui(size: 12, weight: FontWeight.w600, color: theme.body),
             ),
             const SizedBox(height: 4),
             Text(
-              "Connect to a remote machine using its 9-digit ID and it will appear here.",
+              'Connect to a remote machine using its 9-digit ID and it will appear here.',
               textAlign: TextAlign.center,
               style: GDtype.ui(size: 10, color: theme.subtle).copyWith(height: 1.4),
             ),

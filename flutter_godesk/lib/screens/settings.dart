@@ -8,6 +8,8 @@ import 'package:flutter/material.dart';
 import '../bridge/bridge.dart';
 import '../bridge/provider.dart';
 import '../config/infra.dart';
+import '../theme/tokens.dart';
+import '../theme/tweaks.dart';
 import '../kit/knob.dart';
 import '../kit/lcd_panel.dart';
 import '../kit/metal_panel.dart';
@@ -21,7 +23,13 @@ import '../theme/typography.dart';
 enum SettingsSection { general, video, security, network, defaults, about }
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+  const SettingsScreen({this.tweaks, super.key});
+
+  /// Optional controller — when present, the General tab shows inline
+  /// theme controls (dark mode toggle, accent palette, LCD palette,
+  /// intensity slider) that mutate it. When null, the panel falls back
+  /// to a hint message.
+  final TweaksController? tweaks;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -112,20 +120,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.didChangeDependencies();
     if (!_audioDevicesLoaded) {
       _audioDevicesLoaded = true;
-      _bridge.audioInputDevices().then((v) {
-        if (!mounted) return;
-        setState(() {
-          _audioInputs = v;
-          _audioInput = v.isNotEmpty ? v.first : null;
-        });
-      });
-      _bridge.audioOutputDevices().then((v) {
-        if (!mounted) return;
-        setState(() {
-          _audioOutputs = v;
-          _audioOutput = v.isNotEmpty ? v.first : null;
-        });
-      });
+      _loadAudioDevices();
     }
     if (!_numericOtpLoaded) {
       _numericOtpLoaded = true;
@@ -213,6 +208,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _customHeadersCtl.text = headers;
       if (qIdx >= 0) _quality = qIdx;
       if (rIdx >= 0) _relay = rIdx;
+    });
+  }
+
+  Future<void> _loadAudioDevices() async {
+    final inputs = await _bridge.audioInputDevices();
+    final outputs = await _bridge.audioOutputDevices();
+    final savedIn = await _bridge.getOption('audio-input');
+    final savedOut = await _bridge.getOption('audio-output');
+    if (!mounted) return;
+    setState(() {
+      _audioInputs = inputs;
+      _audioOutputs = outputs;
+      // Use saved choice if it's still in the enumerated list, else fall
+      // back to the first available device.
+      _audioInput = inputs.contains(savedIn)
+          ? savedIn
+          : (inputs.isNotEmpty ? inputs.first : null);
+      _audioOutput = outputs.contains(savedOut)
+          ? savedOut
+          : (outputs.isNotEmpty ? outputs.first : null);
     });
   }
 
@@ -319,10 +334,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             children: <Widget>[
               const SectionLabel('Theme'),
               const SizedBox(height: 12),
-              Text(
-                'Theme & accent are controlled from the floating Tweaks panel (later: integrated here).',
-                style: GDtype.ui(size: 11, color: t.subtle),
-              ),
+              if (widget.tweaks == null)
+                Text(
+                  'Theme controls unavailable (Tweaks controller not provided).',
+                  style: GDtype.ui(size: 11, color: t.subtle),
+                )
+              else
+                _ThemeControls(tweaks: widget.tweaks!),
             ],
           ),
         ),
@@ -383,7 +401,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 label: 'Output device',
                 value: _audioOutput,
                 items: _audioOutputs,
-                onChanged: (v) => setState(() => _audioOutput = v),
+                onChanged: (v) {
+                  setState(() => _audioOutput = v);
+                  if (v != null) _bridge.setOption('audio-output', v);
+                },
               ),
               const SizedBox(height: 12),
               _audioDevicePicker(
@@ -391,7 +412,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 label: 'Input device (mic)',
                 value: _audioInput,
                 items: _audioInputs,
-                onChanged: (v) => setState(() => _audioInput = v),
+                onChanged: (v) {
+                  setState(() => _audioInput = v);
+                  if (v != null) _bridge.setOption('audio-input', v);
+                },
               ),
             ],
           ),
@@ -1219,6 +1243,175 @@ class _SegmentButton extends StatelessWidget {
               size: 11,
               color: active ? Colors.white : t.body,
               trackingEm: 0.06,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Inline replacement for the floating Tweaks panel — lives inside the
+/// General tab when a `TweaksController` is supplied. Lets the user
+/// flip dark mode, pick the accent palette, pick the LCD palette and
+/// nudge the overall intensity without leaving the settings screen.
+class _ThemeControls extends StatefulWidget {
+  const _ThemeControls({required this.tweaks});
+  final TweaksController tweaks;
+
+  @override
+  State<_ThemeControls> createState() => _ThemeControlsState();
+}
+
+class _ThemeControlsState extends State<_ThemeControls> {
+  @override
+  void initState() {
+    super.initState();
+    widget.tweaks.addListener(_onTick);
+  }
+
+  @override
+  void dispose() {
+    widget.tweaks.removeListener(_onTick);
+    super.dispose();
+  }
+
+  void _onTick() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).extension<GoDeskTheme>()!;
+    final tw = widget.tweaks.value;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            Expanded(
+              child: Text('Dark mode',
+                  style: GDtype.ui(
+                      size: 12, weight: FontWeight.w500, color: t.heading)),
+            ),
+            GoDeskToggle(
+              value: tw.darkMode,
+              onChanged: widget.tweaks.setDarkMode,
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        Text('Accent', style: GDtype.ui(size: 11, color: t.subtle)),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: <Widget>[
+            for (final entry in accents.entries)
+              _SwatchButton(
+                color: entry.value.light,
+                ring: entry.value.dark,
+                selected: tw.accent == entry.key,
+                tooltip: entry.key,
+                onTap: () => widget.tweaks.setAccent(entry.key),
+              ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        Text('LCD palette', style: GDtype.ui(size: 11, color: t.subtle)),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: <Widget>[
+            for (final entry in lcdPalettes.entries)
+              _SwatchButton(
+                color: entry.value.ink,
+                ring: entry.value.dim,
+                selected: tw.lcd == entry.key,
+                tooltip: entry.key,
+                onTap: () => widget.tweaks.setLcd(entry.key),
+              ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        Row(
+          children: <Widget>[
+            Text('Intensity',
+                style: GDtype.ui(size: 11, color: t.subtle)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  trackHeight: 3,
+                  activeTrackColor: t.accent,
+                  inactiveTrackColor: t.border,
+                  thumbColor: t.accentDark,
+                  overlayShape: SliderComponentShape.noOverlay,
+                ),
+                child: Slider(
+                  min: 0.3,
+                  max: 1.4,
+                  value: tw.intensity,
+                  onChanged: widget.tweaks.setIntensity,
+                ),
+              ),
+            ),
+            SizedBox(
+              width: 36,
+              child: Text(tw.intensity.toStringAsFixed(2),
+                  textAlign: TextAlign.right,
+                  style: GDtype.mono(size: 11, color: t.body)),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _SwatchButton extends StatelessWidget {
+  const _SwatchButton({
+    required this.color,
+    required this.ring,
+    required this.selected,
+    required this.tooltip,
+    required this.onTap,
+  });
+  final Color color;
+  final Color ring;
+  final bool selected;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).extension<GoDeskTheme>()!;
+    return Tooltip(
+      message: tooltip,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: Container(
+            width: 22,
+            height: 22,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: selected ? t.heading : ring,
+                width: selected ? 2 : 1,
+              ),
+              boxShadow: selected
+                  ? <BoxShadow>[
+                      BoxShadow(
+                        color: color.withValues(alpha: 0.55),
+                        blurRadius: 6,
+                      ),
+                    ]
+                  : const <BoxShadow>[],
             ),
           ),
         ),

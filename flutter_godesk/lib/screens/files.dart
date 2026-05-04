@@ -1,6 +1,7 @@
 // Files screen — VU meters, transfer queue, completed list.
 // Port of godesk-skeuo-files.jsx.
 
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -305,19 +306,56 @@ class _FilesScreenState extends State<FilesScreen> {
     );
   }
 
+  bool _draggingHover = false;
+
+  Future<void> _handleDrop(DropDoneDetails details) async {
+    if (!mounted) return;
+    final inSession = (await _bridge.sessionState().first).inSession;
+    if (!mounted) return;
+    if (!inSession) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
+        duration: Duration(milliseconds: 2200),
+        content: Text('Connect to a peer first — drop files into an active session.'),
+      ));
+      return;
+    }
+    for (final f in details.files) {
+      await _bridge.addTransfer(filePath: f.path, dir: TransferDir.send);
+    }
+  }
+
   Widget _rightColumn(GoDeskTheme t, List<TransferItem> queue) {
     final activeCount = queue.where((q) => !q.done).length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        // Transfer queue panel
+        // Transfer queue panel — wrapped in DropTarget so the user can
+        // drag files from File Explorer into the queue to enqueue them.
         Expanded(
-          child: Container(
-            decoration: BoxDecoration(
-              color: t.panel,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: t.border),
-            ),
+          child: DropTarget(
+            onDragEntered: (_) => setState(() => _draggingHover = true),
+            onDragExited: (_) => setState(() => _draggingHover = false),
+            onDragDone: (d) {
+              setState(() => _draggingHover = false);
+              _handleDrop(d);
+            },
+            child: Container(
+              decoration: BoxDecoration(
+                color: t.panel,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: _draggingHover ? t.accent : t.border,
+                  width: _draggingHover ? 2 : 1,
+                ),
+                boxShadow: _draggingHover
+                    ? <BoxShadow>[
+                        BoxShadow(
+                          color: t.accentGlow.withValues(alpha: 0.4),
+                          blurRadius: 12,
+                        ),
+                      ]
+                    : const <BoxShadow>[],
+              ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(9.5),
               child: Column(
@@ -372,10 +410,11 @@ class _FilesScreenState extends State<FilesScreen> {
                           ),
                   ),
                 ],
-              ),
-            ),
-          ),
-        ),
+              ),  // Column close
+            ),  // ClipRRect close
+              ),  // Container close
+            ),  // DropTarget close
+          ),  // Expanded close
         const SizedBox(height: 12),
         // RECENT — completed transfers from THIS session. completedItems is
         // demo-only (mock GODESK_DEMO data); production builds show empty

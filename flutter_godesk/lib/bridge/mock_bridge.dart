@@ -306,6 +306,12 @@ class MockBridge implements Bridge {
   }
 
   @override
+  Future<void> switchDisplay(int index) async {
+    _session = _session.copyWith(currentDisplay: index);
+    _sessionState.add(_session);
+  }
+
+  @override
   Future<void> togglePrivacyMode(String key) async {
     final current = Set<String>.from(_session.privacyModes);
     if (current.contains(key)) {

@@ -25,5 +25,5 @@ class BridgeProvider extends InheritedWidget {
   }
 
   @override
-  bool updateShouldNotify(BridgeProvider old) => bridge != old.bridge;
+  bool updateShouldNotify(BridgeProvider oldWidget) => bridge != oldWidget.bridge;
 }

@@ -178,7 +178,7 @@ class _GoDeskShellState extends State<GoDeskShell> {
     return switch (_tab) {
       SkeuoTab.home => HomeScreen(onConnect: _connect),
       SkeuoTab.files => const FilesScreen(),
-      SkeuoTab.settings => const SettingsScreen(),
+      SkeuoTab.settings => SettingsScreen(tweaks: widget.controller),
     };
   }
 
@@ -251,9 +251,3 @@ class _Footer extends StatelessWidget {
   }
 }
 
-extension on Color {
-  Color darken(double amount) {
-    final hsl = HSLColor.fromColor(this);
-    return hsl.withLightness((hsl.lightness - amount).clamp(0.0, 1.0)).toColor();
-  }
-}

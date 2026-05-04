@@ -20,8 +20,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' as ffi;
-import 'dart:math';
 import 'dart:io';
+import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:uuid/uuid.dart';
 import 'package:texture_rgba_renderer/texture_rgba_renderer.dart';
@@ -308,10 +309,12 @@ class RealBridge implements Bridge {
             case 'sync_peer_info':
               // body['displays'] is JSON list of {x,y,width,height}.
               final disp = _firstDisplay(body);
+              final count = _displayCount(body);
               if (disp != null) {
                 _session = _session.copyWith(
                   frameWidth: disp.$1,
                   frameHeight: disp.$2,
+                  displayCount: count,
                 );
                 _sessionState.add(_session);
                 // Tell Rust the canvas size so it knows what to render into.
@@ -403,6 +406,16 @@ class RealBridge implements Bridge {
     } catch (_) {
       return null;
     }
+  }
+
+  int _displayCount(Map<String, dynamic> body) {
+    try {
+      final raw = body['displays'];
+      if (raw == null) return 1;
+      final list = raw is String ? jsonDecode(raw) : raw;
+      if (list is List) return list.length.clamp(1, 16);
+    } catch (_) {}
+    return 1;
   }
 
   // ─── Identity ─────────────────────────────────────────────────────────
@@ -612,12 +625,29 @@ class RealBridge implements Bridge {
   }
 
   @override
+  Future<void> switchDisplay(int index) async {
+    final sid = _currentSessionId;
+    if (sid == null) return;
+    await _api.sessionSwitchDisplay(
+      isDesktop: true,
+      sessionId: sid,
+      value: Int32List.fromList(<int>[index]),
+    );
+    _session = _session.copyWith(currentDisplay: index);
+    _sessionState.add(_session);
+  }
+
+  @override
   Future<void> togglePrivacyMode(String key) async {
     final sid = _currentSessionId;
     if (sid == null) return;
     final modes = Set<String>.from(_session.privacyModes);
     final on = !modes.contains(key);
-    if (on) modes.add(key); else modes.remove(key);
+    if (on) {
+      modes.add(key);
+    } else {
+      modes.remove(key);
+    }
     await _api.sessionTogglePrivacyMode(sessionId: sid, implKey: key, on: on);
     _session = _session.copyWith(privacyModes: modes);
     _sessionState.add(_session);

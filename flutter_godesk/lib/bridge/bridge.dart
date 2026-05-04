@@ -73,6 +73,8 @@ class SessionState {
     this.frameWidth = 0,
     this.frameHeight = 0,
     this.fit = DisplayFit.fit,
+    this.displayCount = 1,
+    this.currentDisplay = 0,
   });
 
   final String? peerId;
@@ -94,6 +96,13 @@ class SessionState {
   final int frameHeight;
   final DisplayFit fit;
 
+  /// Number of displays the remote machine reports. When > 1, the session
+  /// toolbar surfaces a display-picker so the operator can switch.
+  final int displayCount;
+
+  /// Currently-selected remote display index (0-based).
+  final int currentDisplay;
+
   bool get inSession => peerId != null;
   bool get hasFrame => textureId != null && textureId != -1;
 
@@ -108,6 +117,8 @@ class SessionState {
     int? frameWidth,
     int? frameHeight,
     DisplayFit? fit,
+    int? displayCount,
+    int? currentDisplay,
   }) {
     return SessionState(
       peerId: (clearPeer ?? false) ? null : peerId ?? this.peerId,
@@ -118,6 +129,8 @@ class SessionState {
       frameWidth: frameWidth ?? this.frameWidth,
       frameHeight: frameHeight ?? this.frameHeight,
       fit: fit ?? this.fit,
+      displayCount: displayCount ?? this.displayCount,
+      currentDisplay: currentDisplay ?? this.currentDisplay,
     );
   }
 }
@@ -177,6 +190,8 @@ abstract class Bridge {
   Future<void> toggleRecording();
   Future<void> togglePrivacyMode(String key);
   Future<void> setDisplayFit(DisplayFit fit);
+  /// Switch the active remote display (multi-monitor peers only).
+  Future<void> switchDisplay(int index);
 
   // — In-session text chat —
   Stream<ChatMessage> chatEvents();

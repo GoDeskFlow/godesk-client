@@ -1,7 +1,7 @@
 name: flutter_godesk
 description: GoDesk skeuomorphic UI — sibling package replacing upstream client/flutter.
 publish_to: 'none'
-version: 0.5.0+50
+version: 0.6.0+60
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -35,6 +35,8 @@ dependencies:
       ref: 42797e0f03141dc2b585f76c64a13974508058b4
   # File picker for ADD FILES / ADD FOLDER actions in the Files screen.
   file_picker: ^8.1.4
+  # Drag-and-drop file paths into the Files screen → enqueue transfers.
+  desktop_drop: ^0.4.4
 
 dev_dependencies:
   flutter_test:

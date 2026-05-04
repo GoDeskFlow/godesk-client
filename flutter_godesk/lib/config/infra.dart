@@ -58,9 +58,9 @@ class GoDeskInfra {
   /// the NSIS installer's `-DGODESK_VERSION=X.Y.Z` flag and `pubspec.yaml`'s
   /// `version:` line. Read by Settings → About and the bottom-bar footer
   /// instead of hardcoding `v0.1.0` in two places.
-  static const String appVersion = '0.5.0';
+  static const String appVersion = '0.6.0';
 
   /// Compact build stamp — Y.MM.DD shown next to the version in About.
   /// Update when cutting a new build.
-  static const String buildStamp = '26.05.03';
+  static const String buildStamp = '26.05.04';
 }

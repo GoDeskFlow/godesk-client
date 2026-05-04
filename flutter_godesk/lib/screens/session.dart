@@ -18,6 +18,7 @@ import 'dart:async';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../bridge/bridge.dart';
 import '../bridge/provider.dart';
@@ -69,6 +70,9 @@ class _SessionScreenState extends State<SessionScreen> {
       if (!mounted) return;
       setState(() => _session = s);
     });
+    // Reflect the active peer in the OS window title so users with
+    // multiple sessions can identify them in the taskbar.
+    windowManager.setTitle('GoDesk · ${widget.peer.displayName}');
     _noticeSub = _bridge.systemNotices().listen((msg) {
       if (!mounted) return;
       ScaffoldMessenger.maybeOf(context)?.showSnackBar(
@@ -91,6 +95,8 @@ class _SessionScreenState extends State<SessionScreen> {
     _chatSub?.cancel();
     _stateSub?.cancel();
     _noticeSub?.cancel();
+    // Reset window title back to "GoDesk" once the session ends.
+    windowManager.setTitle('GoDesk');
     super.dispose();
   }
 
@@ -294,6 +300,35 @@ class _SessionScreenState extends State<SessionScreen> {
                         _bridge.setDisplayFit(next);
                       },
                     ),
+                    if (_session.displayCount > 1) ...<Widget>[
+                      const SizedBox(width: 4),
+                      // Display switcher — popup menu of 1..N indices for
+                      // multi-monitor remote machines.
+                      PopupMenuButton<int>(
+                        tooltip: 'Switch remote display',
+                        offset: const Offset(0, 28),
+                        onSelected: _bridge.switchDisplay,
+                        itemBuilder: (ctx) => <PopupMenuEntry<int>>[
+                          for (var i = 0; i < _session.displayCount; i++)
+                            PopupMenuItem<int>(
+                              value: i,
+                              child: Text('Display ${i + 1}'),
+                            ),
+                        ],
+                        child: TactileButton(
+                          small: true,
+                          onPressed: null, // PopupMenuButton handles tap.
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: <Widget>[
+                              const Icon(Icons.monitor, size: 12),
+                              const SizedBox(width: 4),
+                              Text('DISP ${_session.currentDisplay + 1}/${_session.displayCount}'),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
                     const SizedBox(width: 4),
                     _ToolbarButton(
                       icon: Icons.lock_outline,

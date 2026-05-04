@@ -3,7 +3,9 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  desktop_drop
   screen_retriever_windows
+  texture_rgba_renderer
   tray_manager
   window_manager
 )

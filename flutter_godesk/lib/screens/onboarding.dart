@@ -3,6 +3,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../bridge/provider.dart';
 import '../chrome/skeuo_logo.dart';
 import '../data/peers.dart';
 import '../kit/lcd_panel.dart';
@@ -455,7 +456,16 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           width: 220,
           child: TactileButton(
             variant: TactileVariant.primary,
-            onPressed: widget.onComplete,
+            onPressed: () async {
+              // Persist the device name the user chose on step 02 so the
+              // RustDesk core advertises it to remote operators. Empty
+              // name → leave RustDesk default (machine hostname).
+              final name = _name.trim();
+              if (name.isNotEmpty) {
+                await BridgeProvider.of(context).setOption('hostname', name);
+              }
+              widget.onComplete();
+            },
             child: const Row(
               mainAxisSize: MainAxisSize.min,
               mainAxisAlignment: MainAxisAlignment.center,
