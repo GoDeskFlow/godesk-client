@@ -144,7 +144,12 @@ class _ScreenTabs extends StatelessWidget {
     ];
     return Container(
       decoration: BoxDecoration(
-        color: t.panel,
+        // Slightly darker than t.panel so the well reads as a recess against
+        // the chrome strip rather than blending into it.
+        color: Color.alphaBlend(
+          Colors.black.withValues(alpha: t.dark ? 0.18 : 0.06),
+          t.panel,
+        ),
         borderRadius: BorderRadius.circular(5),
         border: Border.all(color: t.border),
       ),
@@ -154,8 +159,11 @@ class _ScreenTabs extends StatelessWidget {
           children: <Widget>[
             Positioned.fill(
               child: IgnorePointer(
+                // Stronger inset (depth 5 vs the previous 3) — design canvas
+                // reads as carved-into-metal; the subtle 3-px well looked
+                // flat in side-by-side comparison.
                 child: CustomPaint(
-                  painter: InsetShadowPainter(theme: t, borderRadius: 5, depth: 3),
+                  painter: InsetShadowPainter(theme: t, borderRadius: 5, depth: 5),
                 ),
               ),
             ),
@@ -169,7 +177,13 @@ class _ScreenTabs extends StatelessWidget {
                     onTap: () => onTab(tabs[i].$1),
                   ),
                   if (i < tabs.length - 1)
-                    Container(width: 1, color: t.border),
+                    // Darker than t.border so the segment seam is visible.
+                    Container(
+                      width: 1,
+                      color: t.dark
+                          ? const Color(0x66000000)
+                          : const Color(0x33000000),
+                    ),
                 ],
               ],
             ),
@@ -199,7 +213,9 @@ class _TabButton extends StatelessWidget {
         behavior: HitTestBehavior.opaque,
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          // Vertical padding bumped 4→6 so tabs have more breathing room
+          // — earlier the strip read as cramped vs the design canvas.
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
             gradient: active
                 ? LinearGradient(
@@ -212,11 +228,22 @@ class _TabButton extends StatelessWidget {
                     end: Alignment.bottomCenter,
                     colors: <Color>[t.panelHi, t.panel],
                   ),
+            // Bevel highlight along the top edge of the active button —
+            // visible on the design canvas as a 1-px brighter line that
+            // sells the "physical button protrudes from the recess" feel.
+            border: active
+                ? Border(
+                    top: BorderSide(
+                      color: Colors.white.withValues(alpha: 0.35),
+                      width: 1,
+                    ),
+                  )
+                : null,
             boxShadow: active
                 ? <BoxShadow>[
                     BoxShadow(
-                      color: t.accentGlow.withValues(alpha: 1 / 3),
-                      blurRadius: 6,
+                      color: t.accentGlow.withValues(alpha: 0.5),
+                      blurRadius: 8,
                       spreadRadius: -1,
                     ),
                   ]
@@ -232,7 +259,7 @@ class _TabButton extends StatelessWidget {
               shadows: <Shadow>[
                 Shadow(
                   color: active
-                      ? const Color(0x40000000)
+                      ? const Color(0x66000000)
                       : t.dark
                           ? const Color(0x66000000)
                           : const Color(0x99FFFFFF),
