@@ -24,6 +24,7 @@ import 'dart:math';
 import 'dart:io';
 
 import 'package:uuid/uuid.dart';
+import 'package:texture_rgba_renderer/texture_rgba_renderer.dart';
 
 import '../data/peers.dart';
 import '../data/transfers.dart';
@@ -92,6 +93,11 @@ class RealBridge implements Bridge {
 
   StreamSubscription<String>? _globalSub;
   StreamSubscription<EventToUI>? _sessionSub;
+
+  // Remote screen rendering — one texture per session, primary display only
+  // for now (multi-monitor support is Phase 5).
+  final TextureRgbaRenderer _textureRenderer = TextureRgbaRenderer();
+  int? _textureKey;
 
   List<Peer> get _peersSnapshot => List<Peer>.unmodifiable(_peerList);
 
@@ -256,6 +262,28 @@ class RealBridge implements Bridge {
               _connectEvents.add(ConnectEvent(peer: peer, stage: ConnectStage.connected));
               _session = SessionState(peerId: peer.id);
               _sessionState.add(_session);
+              // Spin up the pixel-buffer texture so the SessionScreen can
+              // render the remote frame as soon as Rust starts pushing.
+              _setupRemoteTexture(sessionId);
+              break;
+            case 'peer_info':
+            case 'sync_peer_info':
+              // body['displays'] is JSON list of {x,y,width,height}.
+              final disp = _firstDisplay(body);
+              if (disp != null) {
+                _session = _session.copyWith(
+                  frameWidth: disp.$1,
+                  frameHeight: disp.$2,
+                );
+                _sessionState.add(_session);
+                // Tell Rust the canvas size so it knows what to render into.
+                _api.sessionSetSize(
+                  sessionId: sessionId,
+                  display: 0,
+                  width: disp.$1,
+                  height: disp.$2,
+                );
+              }
               break;
             case 'msgbox':
               _onMsgbox(body);
@@ -269,6 +297,74 @@ class RealBridge implements Bridge {
       // ignore: avoid_print
       print('[RealBridge] sessionStart stream error: $e');
     });
+  }
+
+  // ─── Remote screen texture ────────────────────────────────────────────
+
+  /// Create a Flutter texture, hand its native pointer to the Rust core via
+  /// `session_register_pixelbuffer_texture`, and publish the textureId on
+  /// [sessionState] so `SessionScreen` can render `Texture(textureId: id)`.
+  /// Mirrors `desktop_render_texture.dart::_PixelbufferTexture.create` from
+  /// upstream client/flutter, scaled down to one display.
+  Future<void> _setupRemoteTexture(UuidValue sessionId) async {
+    try {
+      final key = _api.getNextTextureKey();
+      _textureKey = key;
+      final id = await _textureRenderer.createTexture(key);
+      if (id == -1) {
+        // ignore: avoid_print
+        print('[RealBridge] createTexture returned -1');
+        return;
+      }
+      final ptr = await _textureRenderer.getTexturePtr(key);
+      _api.sessionRegisterPixelbufferTexture(
+        sessionId: sessionId,
+        display: 0,
+        ptr: ptr,
+      );
+      _session = _session.copyWith(textureId: id);
+      _sessionState.add(_session);
+    } catch (e) {
+      // ignore: avoid_print
+      print('[RealBridge] _setupRemoteTexture failed: $e');
+    }
+  }
+
+  Future<void> _teardownRemoteTexture(UuidValue sessionId) async {
+    final key = _textureKey;
+    if (key == null) return;
+    try {
+      // Pointer 0 deregisters the texture from the Rust side; gives Rust a
+      // chance to stop writing before we free the buffer.
+      _api.sessionRegisterPixelbufferTexture(
+        sessionId: sessionId,
+        display: 0,
+        ptr: 0,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await _textureRenderer.closeTexture(key);
+    } catch (e) {
+      // ignore: avoid_print
+      print('[RealBridge] _teardownRemoteTexture failed: $e');
+    }
+    _textureKey = null;
+  }
+
+  /// Extract the first display's width/height from a peer_info-style body.
+  (int, int)? _firstDisplay(Map<String, dynamic> body) {
+    try {
+      final raw = body['displays'];
+      if (raw == null) return null;
+      final list = raw is String ? jsonDecode(raw) : raw;
+      if (list is! List || list.isEmpty) return null;
+      final first = list.first as Map<String, dynamic>;
+      final w = (first['width'] as num?)?.toInt() ?? 0;
+      final h = (first['height'] as num?)?.toInt() ?? 0;
+      if (w <= 0 || h <= 0) return null;
+      return (w, h);
+    } catch (_) {
+      return null;
+    }
   }
 
   // ─── Identity ─────────────────────────────────────────────────────────
@@ -398,6 +494,7 @@ class RealBridge implements Bridge {
   Future<void> cancelConnect() async {
     final sid = _currentSessionId;
     if (sid == null) return;
+    await _teardownRemoteTexture(sid);
     await _api.sessionClose(sessionId: sid);
     _currentSessionId = null;
     await _sessionSub?.cancel();
@@ -408,6 +505,7 @@ class RealBridge implements Bridge {
   Future<void> disconnect() async {
     final sid = _currentSessionId;
     if (sid == null) return;
+    await _teardownRemoteTexture(sid);
     await _api.sessionClose(sessionId: sid);
     _currentSessionId = null;
     await _sessionSub?.cancel();

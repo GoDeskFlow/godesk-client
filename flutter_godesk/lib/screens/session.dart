@@ -149,11 +149,20 @@ class _SessionScreenState extends State<SessionScreen> {
       color: const Color(0xFF0A0A0A),
       child: Stack(
         children: <Widget>[
+          // Remote screen — Texture widget showing the RGBA buffer Rust core
+          // writes to, OR the gradient placeholder while we wait for the
+          // first frame (Mock build / RealBridge before peer_info arrives).
           Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(gradient: bg),
-              child: const _SessionInner(),
-            ),
+            child: _session.hasFrame
+                ? _RemoteFrame(
+                    textureId: _session.textureId!,
+                    width: _session.frameWidth,
+                    height: _session.frameHeight,
+                  )
+                : DecoratedBox(
+                    decoration: BoxDecoration(gradient: bg),
+                    child: const _SessionInner(),
+                  ),
           ),
           // Privacy "blank screen" overlay — RuDesktop parity.
           if (blanked)
@@ -286,6 +295,34 @@ class _SessionScreenState extends State<SessionScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Renders the active session's RGBA frame coming from the Rust core via
+/// `texture_rgba_renderer`. The Texture widget is GPU-backed so frame updates
+/// are essentially free for Flutter — the Rust side writes pixels directly
+/// into the native texture buffer Flutter created.
+class _RemoteFrame extends StatelessWidget {
+  const _RemoteFrame({
+    required this.textureId,
+    required this.width,
+    required this.height,
+  });
+
+  final int textureId;
+  final int width;
+  final int height;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: const Color(0xFF000000),
+      alignment: Alignment.center,
+      child: AspectRatio(
+        aspectRatio: width > 0 && height > 0 ? width / height : 16 / 9,
+        child: Texture(textureId: textureId),
       ),
     );
   }

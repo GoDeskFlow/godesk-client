@@ -62,6 +62,9 @@ class SessionState {
     this.voiceActive = false,
     this.recording = false,
     this.privacyModes = const <String>{},
+    this.textureId,
+    this.frameWidth = 0,
+    this.frameHeight = 0,
   });
 
   final String? peerId;
@@ -69,7 +72,21 @@ class SessionState {
   final bool recording;
   final Set<String> privacyModes;
 
+  /// Flutter platform-side texture id for the primary display's RGBA frame.
+  /// `null` while the texture is being set up; non-null once
+  /// `texture_rgba_renderer.createTexture` returns and the Rust core's
+  /// `session_register_pixelbuffer_texture` has been called with the native
+  /// pointer. The session screen renders `Texture(textureId: ...)` when set.
+  final int? textureId;
+
+  /// Remote display dimensions in pixels — fed by the global event stream's
+  /// `peer_info` event. SessionScreen uses these to size the Texture widget
+  /// with the correct aspect ratio.
+  final int frameWidth;
+  final int frameHeight;
+
   bool get inSession => peerId != null;
+  bool get hasFrame => textureId != null && textureId != -1;
 
   SessionState copyWith({
     String? peerId,
@@ -77,12 +94,19 @@ class SessionState {
     bool? voiceActive,
     bool? recording,
     Set<String>? privacyModes,
+    int? textureId,
+    bool? clearTexture,
+    int? frameWidth,
+    int? frameHeight,
   }) {
     return SessionState(
       peerId: (clearPeer ?? false) ? null : peerId ?? this.peerId,
       voiceActive: voiceActive ?? this.voiceActive,
       recording: recording ?? this.recording,
       privacyModes: privacyModes ?? this.privacyModes,
+      textureId: (clearTexture ?? false) ? null : textureId ?? this.textureId,
+      frameWidth: frameWidth ?? this.frameWidth,
+      frameHeight: frameHeight ?? this.frameHeight,
     );
   }
 }

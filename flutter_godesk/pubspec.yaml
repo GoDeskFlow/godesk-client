@@ -1,7 +1,7 @@
 name: flutter_godesk
 description: GoDesk skeuomorphic UI — sibling package replacing upstream client/flutter.
 publish_to: 'none'
-version: 0.2.0+20
+version: 0.2.1+21
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -27,6 +27,12 @@ dependencies:
   tray_manager: ^0.2.4         # system tray icon + menu (minimise-to-tray)
   window_manager: ^0.4.3       # show/hide/restore window from tray
   path_provider: ^2.1.4        # %LOCALAPPDATA%\GoDesk\logs path
+  # Phase 2.4 — remote screen rendering. RustDesk's pinned fork; same
+  # commit upstream client/flutter uses so the protocol matches.
+  texture_rgba_renderer:
+    git:
+      url: https://github.com/rustdesk-org/flutter_texture_rgba_renderer
+      ref: 42797e0f03141dc2b585f76c64a13974508058b4
 
 dev_dependencies:
   flutter_test:
