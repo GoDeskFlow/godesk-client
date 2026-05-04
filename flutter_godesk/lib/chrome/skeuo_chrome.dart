@@ -65,11 +65,14 @@ class SkeuoChrome extends StatelessWidget {
                       ),
                     ),
                   ),
-                  // Real brushed-stripes overlay (1-px-on / 3-px-off via
-                  // CustomPainter — see kit/brushed_overlay.dart for why a
-                  // gradient with tileMode:repeated didn't work here).
+                  // Subtle chrome stripes — JSX reference uses
+                  // `repeating-linear-gradient(90deg, rgba(255,255,255,0.02)
+                  // 0 1px, transparent 1px 3px)` — i.e. ~2% alpha. The
+                  // MetalPanel-level 0.6 we initially used here painted the
+                  // chrome with too-dark stripes that bled through the tabs
+                  // ("словно фон заходит"). Drop opacity to barely-there.
                   const Positioned.fill(
-                    child: BrushedOverlay(opacity: 0.4),
+                    child: BrushedOverlay(opacity: 0.06, tile: 3),
                   ),
                 ],
               ),
