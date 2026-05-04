@@ -66,13 +66,13 @@ class SkeuoChrome extends StatelessWidget {
                     ),
                   ),
                   // Subtle chrome stripes — JSX reference uses
-                  // `repeating-linear-gradient(90deg, rgba(255,255,255,0.02)
-                  // 0 1px, transparent 1px 3px)` — i.e. ~2% alpha. The
-                  // MetalPanel-level 0.6 we initially used here painted the
-                  // chrome with too-dark stripes that bled through the tabs
-                  // ("словно фон заходит"). Drop opacity to barely-there.
+                  // `rgba(255,255,255,0.02)` ≈ 2% alpha white. With our
+                  // `t.brushed` color (0x33FFFFFF = ~20% white) the
+                  // multiplier needs to be ~0.10 to land on a 2% effective
+                  // alpha (0.2 × 0.10 = 0.02). 0.06 from 0.1.8 was a touch
+                  // too faint; 0.10 brings it back to the reference.
                   const Positioned.fill(
-                    child: BrushedOverlay(opacity: 0.06, tile: 3),
+                    child: BrushedOverlay(opacity: 0.10, tile: 3),
                   ),
                 ],
               ),
@@ -144,12 +144,12 @@ class _ScreenTabs extends StatelessWidget {
     ];
     return Container(
       decoration: BoxDecoration(
-        // Slightly darker than t.panel so the well reads as a recess against
-        // the chrome strip rather than blending into it.
-        color: Color.alphaBlend(
-          Colors.black.withValues(alpha: t.dark ? 0.18 : 0.06),
-          t.panel,
-        ),
+        // JSX reference uses plain `t.panel` here. The "carved" recess look
+        // comes from the InsetShadowPainter + bevelIn — NOT from a darker
+        // background. Earlier port (0.1.9) used `Color.alphaBlend(black @18%,
+        // panel)` which made the well read as nearly-black instead of the
+        // mid-tone the design canvas shows.
+        color: t.panel,
         borderRadius: BorderRadius.circular(5),
         border: Border.all(color: t.border),
       ),
