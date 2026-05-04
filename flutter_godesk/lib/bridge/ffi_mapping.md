@@ -69,6 +69,28 @@ tick comes through here. RealBridge's job is to:
 Dart-side schema: the existing `lib/bridge/bridge.dart` `Stream<X>`
 signatures already match this fan-out — implementation is mechanical.
 
+## Active session — Phase 2.5 surface
+
+These were added to the `Bridge` interface in 0.1.5 alongside the
+RuDesktop Tier-1 sweep. Map directly to per-session FFI calls
+exposed by upstream `flutter_ffi.rs`:
+
+| Bridge method | Rust fn | Notes |
+|---------------|---------|-------|
+| `sessionState()` | derived from global event stream — `connecting / connected / failed / closed` events keyed by `session_id` | RealBridge maintains `SessionState` reactive cache. |
+| `requestRestart()` | `session_restart_remote_device(session_id)` | Per upstream — naming may differ, search around `restart`. |
+| `toggleVoiceCall()` | `session_request_voice_call(session_id)` ↔ `session_close_voice_call(session_id)` | Two functions — RealBridge tracks current state and dispatches the right one. |
+| `toggleRecording()` | `session_record_screen(session_id, start: bool)` + `session_get_is_recording(session_id) -> SyncReturn<bool>` | Toggle = read state, call with negation. |
+| `togglePrivacyMode(key)` | `session_toggle_privacy_mode(session_id, impl_key: String, on: bool)` | Same toggle pattern as recording. |
+| `chatEvents()` | global event stream → `type: "chat_message"` filtered by current session_id | Demultiplexer pushes typed `ChatMessage`. |
+| `sendChat(text)` | `session_send_chat(session_id, text: String)` | Sync void return; echo arrives via event stream. |
+| `audioInputDevices()` | `main_get_sound_inputs() -> Vec<String>` | Sync host-OS enumeration. |
+| `audioOutputDevices()` | upstream may not expose — fallback to platform_channels (Win audio API) if absent | Worst case: ship `["Default"]` only. |
+| `inviteLink(id, otp)` | **Local only** — base64-encode `${id}\|${otp}`, prepend `https://godeskflow.com/c/`. | No Rust call needed; same impl as MockBridge. |
+| `numericOtp` | `main_get_option("approve-mode")` and `main_set_option("approve-mode", "...")` (bool key TBD) | RustDesk has separate "easier-to-dictate password" option. Confirm exact key during wiring. |
+| `setPeerOption(id, key, value)` | `main_set_peer_option(id: String, key: String, value: String)` | Sync. |
+| `getPeerOption(id, key)` | `main_get_peer_option(id: String, key: String) -> String` (or `_sync` variant) | Sync. |
+
 ## Settings (Settings screen)
 
 A few examples — full set is `session_get_*` / `session_set_*` and

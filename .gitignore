@@ -58,3 +58,4 @@ libsciter.dylib
 flutter/web/
 
 vcpkg/
+*.log
