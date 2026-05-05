@@ -26,8 +26,9 @@ import 'dart:io';
 import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart' show WidgetsBinding;
-import 'package:flutter/material.dart' show Size, Color;
+import 'package:flutter/material.dart' show Size, Color, Offset;
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -186,20 +187,45 @@ String? get crashLogPath => _crashLog.path;
 // ─── tray + window ──────────────────────────────────────────────────────
 
 class TrayController with TrayListener, WindowListener {
+  static const _kWidth = 'godesk.window.width';
+  static const _kHeight = 'godesk.window.height';
+  static const _kX = 'godesk.window.x';
+  static const _kY = 'godesk.window.y';
+  static const _kMaximized = 'godesk.window.maximized';
+
   Future<void> init() async {
     await windowManager.ensureInitialized();
+    // Restore previous size/position from shared_preferences. Falls back
+    // to design defaults on first launch.
+    final prefs = await SharedPreferences.getInstance();
+    final savedW = prefs.getDouble(_kWidth);
+    final savedH = prefs.getDouble(_kHeight);
+    final savedX = prefs.getDouble(_kX);
+    final savedY = prefs.getDouble(_kY);
+    final wasMaximized = prefs.getBool(_kMaximized) ?? false;
+    final restoreSize = (savedW != null && savedH != null)
+        ? Size(savedW, savedH)
+        : const Size(940, 660);
     // Frameless: hide the OS title bar so our SkeuoChrome IS the chrome.
     // Eliminates the "app inside an app" visual stacking.
-    const opts = WindowOptions(
-      size: Size(940, 660), // matches design 920×620 + small padding for shadow
-      minimumSize: Size(900, 600),
-      center: true,
+    final opts = WindowOptions(
+      size: restoreSize,
+      minimumSize: const Size(900, 600),
+      center: savedX == null || savedY == null,
       title: 'GoDesk',
-      backgroundColor: Color(0x00000000),
+      backgroundColor: const Color(0x00000000),
       skipTaskbar: false,
       titleBarStyle: TitleBarStyle.hidden,
     );
     await windowManager.waitUntilReadyToShow(opts, () async {
+      // Position restoration is separate from size (WindowOptions has no
+      // explicit (x,y)) — apply after the window is ready.
+      if (savedX != null && savedY != null) {
+        await windowManager.setPosition(Offset(savedX, savedY));
+      }
+      if (wasMaximized) {
+        await windowManager.maximize();
+      }
       await windowManager.show();
       await windowManager.focus();
     });
@@ -230,6 +256,44 @@ class TrayController with TrayListener, WindowListener {
     }
   }
 
+  /// Throttle for window-state writes — we get one event per frame
+  /// during a drag-resize, no need to hammer SharedPreferences.
+  Timer? _persistTimer;
+  void _schedulePersist() {
+    _persistTimer?.cancel();
+    _persistTimer = Timer(const Duration(milliseconds: 600), _persistWindowState);
+  }
+
+  Future<void> _persistWindowState() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final size = await windowManager.getSize();
+      final pos = await windowManager.getPosition();
+      final maxed = await windowManager.isMaximized();
+      // Don't overwrite "good" geometry with the maximised window's
+      // bounds — when the user un-maximises we want them back at the
+      // pre-max size. Only persist size/pos when not maximised.
+      if (!maxed) {
+        await prefs.setDouble(_kWidth, size.width);
+        await prefs.setDouble(_kHeight, size.height);
+        await prefs.setDouble(_kX, pos.dx);
+        await prefs.setDouble(_kY, pos.dy);
+      }
+      await prefs.setBool(_kMaximized, maxed);
+    } catch (_) {
+      // Best-effort — failure to persist isn't worth crashing for.
+    }
+  }
+
+  @override
+  void onWindowResized() => _schedulePersist();
+  @override
+  void onWindowMoved() => _schedulePersist();
+  @override
+  void onWindowMaximize() => _schedulePersist();
+  @override
+  void onWindowUnmaximize() => _schedulePersist();
+
   @override
   void onWindowClose() async {
     // X (red traffic light) = real quit. Earlier behaviour ("hide to tray")
@@ -245,6 +309,8 @@ class TrayController with TrayListener, WindowListener {
     //
     // We deliberately don't `setPreventClose(false)` here — the close has
     // already been delivered to us; calling `destroy()` quits cleanly.
+    _persistTimer?.cancel();
+    await _persistWindowState();
     await _crashLog.close();
     await windowManager.destroy();
   }

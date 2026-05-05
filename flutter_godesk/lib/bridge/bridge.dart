@@ -29,11 +29,17 @@ class Diagnostics {
     required this.cipher,
     required this.latencyMs,
     required this.natType,
+    this.bandwidthKbps = 0,
   });
   final String relay;
   final String cipher;
   final int latencyMs;
   final String natType;
+
+  /// Aggregated session bandwidth in kbps (in + out). 0 means no active
+  /// session. Sourced from the global event stream's `network_info`
+  /// frames; for mocks this is randomized so the sparkline animates.
+  final int bandwidthKbps;
 }
 
 /// Stage of an in-progress connect attempt — drives the ConnectingOverlay.

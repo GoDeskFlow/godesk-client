@@ -79,11 +79,12 @@ class MockBridge implements Bridge {
   /// Diagnostics — when there's no active session in real life, latency and
   /// NAT are unknown. Empty mode reflects that honestly.
   Diagnostics get _diagnosticsSnapshot => _demoMode
-      ? const Diagnostics(
+      ? Diagnostics(
           relay: 'eu-west-1',
           cipher: 'AES-256-GCM',
-          latencyMs: 12,
+          latencyMs: _demoLatency,
           natType: 'Symmetric',
+          bandwidthKbps: _demoBandwidth,
         )
       : const Diagnostics(
           relay: '—',
@@ -91,6 +92,17 @@ class MockBridge implements Bridge {
           latencyMs: 0,
           natType: 'Unknown',
         );
+
+  // Demo-mode noise so the latency/bandwidth sparklines animate. The
+  // values walk +/- a small step each tick, clamped to a realistic range.
+  int _demoLatency = 12;
+  int _demoBandwidth = 800;
+  final Random _demoRng = Random();
+  void _stepDemoStats() {
+    if (!_demoMode) return;
+    _demoLatency = (_demoLatency + _demoRng.nextInt(7) - 3).clamp(8, 80);
+    _demoBandwidth = (_demoBandwidth + _demoRng.nextInt(80) - 40).clamp(120, 2200);
+  }
 
   Timer? _ticker;
   late final StreamController<List<Peer>> _peers;
@@ -103,7 +115,7 @@ class MockBridge implements Bridge {
   void _tick() {
     var changed = false;
     for (final i in _queue) {
-      if (i.done || i.queued) continue;
+      if (i.done || i.queued || i.failed) continue;
       final newSent = (i.sent + (i.speed * 0.4).round()).clamp(0, i.size);
       final isDone = newSent >= i.size;
       if (newSent != i.sent || isDone) {
@@ -114,7 +126,16 @@ class MockBridge implements Bridge {
       }
     }
     if (changed) _transfers.add(List<TransferItem>.unmodifiable(_queue));
+    // Demo-mode: also step latency/bandwidth on every other tick (~1.2s)
+    // so the About sparkline has visible motion without thrashing.
+    _diagTickCount = (_diagTickCount + 1) % 3;
+    if (_diagTickCount == 0) {
+      _stepDemoStats();
+      _diagnostics.add(_diagnosticsSnapshot);
+    }
   }
+
+  int _diagTickCount = 0;
 
   @override
   Future<Identity> identity() async =>

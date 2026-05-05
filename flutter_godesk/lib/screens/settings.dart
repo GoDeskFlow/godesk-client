@@ -1011,8 +1011,96 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
           ),
         ),
+        const SizedBox(height: 12),
+        // Hard reset — clears every godesk-default-* option so the next
+        // session starts with vanilla defaults. Confirmed before firing.
+        Align(
+          alignment: Alignment.centerRight,
+          child: TactileButton(
+            small: true,
+            variant: TactileVariant.danger,
+            onPressed: _resetDefaultsConfirm,
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Icon(Icons.restart_alt, size: 12),
+                SizedBox(width: 4),
+                Text('RESET TO DEFAULTS'),
+              ],
+            ),
+          ),
+        ),
       ],
     );
+  }
+
+  Future<void> _resetDefaultsConfirm() async {
+    final t = Theme.of(context).extension<GoDeskTheme>()!;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: t.panel,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: BorderSide(color: t.border),
+        ),
+        title: Text('Reset defaults?',
+            style: GDtype.ui(size: 14, weight: FontWeight.w700, color: t.heading)),
+        content: Text(
+          'Clears every preset on this Defaults tab and reverts to the '
+          'factory values. Per-peer overrides and other Settings sections '
+          '(General, Video & Audio, Security, Network) are untouched.',
+          style: GDtype.ui(size: 12, color: t.body),
+        ),
+        actions: <Widget>[
+          TactileButton(
+            small: true,
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('CANCEL'),
+          ),
+          TactileButton(
+            small: true,
+            variant: TactileVariant.danger,
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('RESET'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    // Clear by writing empty values (RustDesk treats empty as "use default").
+    const keys = <String>[
+      'godesk-default-show-cursor',
+      'godesk-default-mute-audio',
+      'godesk-default-privacy-mode',
+      'godesk-default-lock-on-end',
+      'godesk-default-view-only',
+      'godesk-default-hide-wallpaper',
+      'godesk-default-clipboard',
+      'godesk-default-adaptive-bitrate',
+      'godesk-default-save-last-session',
+      'godesk-default-open-fs-root',
+      'godesk-default-display-fit',
+      'godesk-default-bitrate',
+    ];
+    for (final k in keys) {
+      await _bridge.setOption(k, '');
+    }
+    if (!mounted) return;
+    setState(() {
+      _defShowCursor = true;
+      _defMuteAudio = false;
+      _defPrivacyMode = false;
+      _defLockOnEnd = false;
+      _defViewOnly = false;
+      _defHideWallpaper = false;
+      _defAllowClipboard = true;
+      _defAdaptiveBitrate = true;
+      _defSaveLastSession = true;
+      _defOpenFsRoot = true;
+      _defDisplayFit = 'fit';
+      _defBitrate = 50;
+    });
   }
 
   Widget _about(GoDeskTheme t) {
@@ -1061,6 +1149,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const SizedBox(height: 12),
         const _LatencySparklinePanel(),
         const SizedBox(height: 12),
+        const _BandwidthSparklinePanel(),
+        const SizedBox(height: 12),
         const _LogsPanel(),
         const SizedBox(height: 12),
         MetalPanel(
@@ -1080,8 +1170,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             style: GDtype.ui(size: 12, weight: FontWeight.w600, color: t.subtle)),
                       ),
                       Expanded(
-                        child: Text(r.$2,
-                            style: GDtype.mono(size: 12, color: t.heading)),
+                        child: _isUrlish(r.$2)
+                            ? _AboutLink(url: r.$2)
+                            : Text(r.$2,
+                                style: GDtype.mono(size: 12, color: t.heading)),
                       ),
                     ],
                   ),
@@ -1377,19 +1469,37 @@ class _ThemeControlsState extends State<_ThemeControls> {
   }
 }
 
-/// Settings → About: rolling sparkline of recent relay latency samples.
+/// Settings → About: rolling sparkline of recent diagnostics samples.
 /// Subscribes to `bridge.diagnostics()` and stores the last [_kSparkN]
-/// values; renders an LCD-style chart on a small MetalPanel.
-class _LatencySparklinePanel extends StatefulWidget {
+/// values; renders an LCD-style chart on a small MetalPanel. Reused for
+/// both latency (ms) and bandwidth (kbps).
+enum _SparkMetric { latency, bandwidth }
+
+class _LatencySparklinePanel extends StatelessWidget {
   const _LatencySparklinePanel();
+  @override
+  Widget build(BuildContext context) =>
+      const _DiagSparklinePanel(metric: _SparkMetric.latency);
+}
+
+class _BandwidthSparklinePanel extends StatelessWidget {
+  const _BandwidthSparklinePanel();
+  @override
+  Widget build(BuildContext context) =>
+      const _DiagSparklinePanel(metric: _SparkMetric.bandwidth);
+}
+
+class _DiagSparklinePanel extends StatefulWidget {
+  const _DiagSparklinePanel({required this.metric});
+  final _SparkMetric metric;
 
   @override
-  State<_LatencySparklinePanel> createState() => _LatencySparklinePanelState();
+  State<_DiagSparklinePanel> createState() => _DiagSparklinePanelState();
 }
 
 const int _kSparkN = 60; // ~1 minute @ 1 sample/sec
 
-class _LatencySparklinePanelState extends State<_LatencySparklinePanel> {
+class _DiagSparklinePanelState extends State<_DiagSparklinePanel> {
   final List<int> _samples = <int>[];
   StreamSubscription<Diagnostics>? _sub;
 
@@ -1399,7 +1509,10 @@ class _LatencySparklinePanelState extends State<_LatencySparklinePanel> {
     _sub ??= BridgeProvider.of(context).diagnostics().listen((d) {
       if (!mounted) return;
       setState(() {
-        _samples.add(d.latencyMs);
+        final v = widget.metric == _SparkMetric.latency
+            ? d.latencyMs
+            : d.bandwidthKbps;
+        _samples.add(v);
         if (_samples.length > _kSparkN) {
           _samples.removeRange(0, _samples.length - _kSparkN);
         }
@@ -1412,6 +1525,21 @@ class _LatencySparklinePanelState extends State<_LatencySparklinePanel> {
     _sub?.cancel();
     super.dispose();
   }
+
+  String _label() => widget.metric == _SparkMetric.latency
+      ? 'Latency (last 60s)'
+      : 'Bandwidth (last 60s)';
+
+  String _format(int v) => widget.metric == _SparkMetric.latency
+      ? '${v}ms'
+      : v >= 1000
+          ? '${(v / 1000).toStringAsFixed(1)}M'
+          : '${v}k';
+
+  /// For latency we floor the chart at a 50ms ceiling so flat-zero still
+  /// shows; for bandwidth we use 200 kbps so empty sessions don't show
+  /// alarming red-line spikes when one byte trickles by.
+  int _ceilingFloor() => widget.metric == _SparkMetric.latency ? 50 : 200;
 
   @override
   Widget build(BuildContext context) {
@@ -1427,7 +1555,7 @@ class _LatencySparklinePanelState extends State<_LatencySparklinePanel> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          const SectionLabel('Latency (last 60s)'),
+          SectionLabel(_label()),
           const SizedBox(height: 10),
           LCDPanel(
             padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
@@ -1455,6 +1583,7 @@ class _LatencySparklinePanelState extends State<_LatencySparklinePanel> {
                   samples: _samples,
                   ink: t.lcdInk,
                   dim: t.lcdDim,
+                  ceilingFloor: _ceilingFloor(),
                 ),
               ),
             ),
@@ -1471,7 +1600,7 @@ class _LatencySparklinePanelState extends State<_LatencySparklinePanel> {
         Text(label,
             style: GDtype.mono(size: 9, color: t.lcdDim, letterSpacing: 0.5)),
         const SizedBox(width: 4),
-        Text('${value}ms', style: lcdReadout(theme: t, size: 13)),
+        Text(_format(value), style: lcdReadout(theme: t, size: 13)),
       ],
     );
   }
@@ -1482,10 +1611,14 @@ class _SparklinePainter extends CustomPainter {
     required this.samples,
     required this.ink,
     required this.dim,
+    this.ceilingFloor = 50,
   });
   final List<int> samples;
   final Color ink;
   final Color dim;
+  /// Minimum Y-axis ceiling so flat-zero sessions show baseline rather
+  /// than a spike. Latency uses 50; bandwidth uses 200.
+  final int ceilingFloor;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1499,9 +1632,10 @@ class _SparklinePainter extends CustomPainter {
     }
     if (samples.length < 2) return;
 
-    // Auto-scale Y to peak (min 50ms ceiling so a flat 0 still shows).
+    // Auto-scale Y to peak with a per-metric minimum ceiling so flat
+    // sessions still show baseline rather than fake spikes.
     final peak = samples.reduce((a, b) => a > b ? a : b);
-    final ceiling = peak < 50 ? 50 : (peak * 1.15).ceil();
+    final ceiling = peak < ceilingFloor ? ceilingFloor : (peak * 1.15).ceil();
     final dx = size.width / (_kSparkN - 1);
     final path = Path();
     for (var i = 0; i < samples.length; i++) {
@@ -1739,6 +1873,83 @@ class _SwatchButton extends StatelessWidget {
                     ]
                   : const <BoxShadow>[],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Whether [s] looks like a URL or `host:port` worth opening in a browser.
+/// Conservative — we only want About links to be clickable, not e.g. the
+/// Platform line.
+bool _isUrlish(String s) {
+  final trimmed = s.trim();
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return true;
+  if (trimmed.startsWith('github.com/')) return true;
+  if (trimmed.startsWith('godeskflow.com')) return true;
+  // host.tld:port — Rendezvous / Relay rows in About.
+  if (RegExp(r'^[a-z0-9.-]+\.[a-z]{2,}(:[0-9]{2,5})?$', caseSensitive: false)
+      .hasMatch(trimmed)) {
+    return true;
+  }
+  return false;
+}
+
+/// Hover-underlined clickable text. Launches [url] in the OS default
+/// browser via the system's `start` / `open` / `xdg-open`. Avoids adding
+/// the url_launcher plugin dependency for two visible links.
+class _AboutLink extends StatefulWidget {
+  const _AboutLink({required this.url});
+  final String url;
+
+  @override
+  State<_AboutLink> createState() => _AboutLinkState();
+}
+
+class _AboutLinkState extends State<_AboutLink> {
+  bool _hovered = false;
+
+  Future<void> _open() async {
+    var url = widget.url.trim();
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://$url';
+    }
+    try {
+      if (Platform.isWindows) {
+        await Process.start('cmd', <String>['/c', 'start', '', url]);
+      } else if (Platform.isMacOS) {
+        await Process.start('open', <String>[url]);
+      } else {
+        await Process.start('xdg-open', <String>[url]);
+      }
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+        duration: const Duration(milliseconds: 2200),
+        content: Text('Could not open $url'),
+      ));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).extension<GoDeskTheme>()!;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: _open,
+        child: Text(
+          widget.url,
+          style: GDtype.mono(
+            size: 12,
+            color: _hovered ? t.accent : t.heading,
+          ).copyWith(
+            decoration: _hovered ? TextDecoration.underline : TextDecoration.none,
+            decorationColor: t.accent,
           ),
         ),
       ),

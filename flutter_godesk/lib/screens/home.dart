@@ -1229,9 +1229,38 @@ class _HomeScreenState extends State<HomeScreen> {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Text(
-            'No peers match "${_searchInput.text}".',
-            style: GDtype.ui(size: 11, color: t.subtle),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(Icons.search_off, size: 32, color: t.subtle.withValues(alpha: 0.5)),
+              const SizedBox(height: 10),
+              Text('No peers match "${_searchInput.text.trim()}"',
+                  style: GDtype.ui(size: 12, weight: FontWeight.w600, color: t.body)),
+              const SizedBox(height: 4),
+              Text(
+                'Searching ${_peers.length} ${_peers.length == 1 ? "peer" : "peers"} '
+                'by name, tag and ID.',
+                textAlign: TextAlign.center,
+                style: GDtype.ui(size: 10, color: t.subtle).copyWith(height: 1.4),
+              ),
+              const SizedBox(height: 10),
+              TactileButton(
+                small: true,
+                onPressed: () {
+                  _searchInput.clear();
+                  setState(() {});
+                  _searchFocus.requestFocus();
+                },
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Icon(Icons.close, size: 11),
+                    SizedBox(width: 4),
+                    Text('CLEAR SEARCH'),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       );
