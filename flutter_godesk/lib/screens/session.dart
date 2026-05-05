@@ -341,12 +341,14 @@ class _SessionScreenState extends State<SessionScreen> {
                     _ToolbarButton(
                       icon: Icons.computer_outlined,
                       label: 'VIEW',
+                      tooltip: 'Focus the remote desktop view',
                       onPressed: () {},
                     ),
                     const SizedBox(width: 4),
                     _ToolbarButton(
                       icon: Icons.folder_outlined,
                       label: 'FILES',
+                      tooltip: 'Open the file transfer panel',
                       onPressed: () {},
                     ),
                     const SizedBox(width: 4),
@@ -355,6 +357,7 @@ class _SessionScreenState extends State<SessionScreen> {
                       label: 'CHAT',
                       active: _chatOpen,
                       badge: _unread,
+                      tooltip: 'Toggle text chat with the remote operator',
                       onPressed: _toggleChat,
                     ),
                     const SizedBox(width: 4),
@@ -362,6 +365,7 @@ class _SessionScreenState extends State<SessionScreen> {
                       icon: voice ? Icons.mic : Icons.mic_off,
                       label: 'VOICE',
                       active: voice,
+                      tooltip: voice ? 'End voice call' : 'Start voice call',
                       onPressed: () => _bridge.toggleVoiceCall(),
                     ),
                     const SizedBox(width: 4),
@@ -370,6 +374,9 @@ class _SessionScreenState extends State<SessionScreen> {
                       label: recording ? 'REC' : 'RECORD',
                       active: recording,
                       activeColor: const Color(0xFFE03030),
+                      tooltip: recording
+                          ? 'Stop session recording'
+                          : 'Record this session to disk',
                       onPressed: () => _bridge.toggleRecording(),
                     ),
                     const SizedBox(width: 4),
@@ -379,6 +386,9 @@ class _SessionScreenState extends State<SessionScreen> {
                       icon: blanked ? Icons.visibility_off : Icons.visibility_outlined,
                       label: 'PRIVACY',
                       active: blanked,
+                      tooltip: blanked
+                          ? 'Show remote screen again'
+                          : 'Blank the remote screen for privacy',
                       onPressed: () => _bridge.togglePrivacyMode('blank-screen'),
                     ),
                     const SizedBox(width: 4),
@@ -392,6 +402,11 @@ class _SessionScreenState extends State<SessionScreen> {
                         DisplayFit.original => '1:1',
                         DisplayFit.fit => 'FIT',
                         DisplayFit.stretch => 'FILL',
+                      },
+                      tooltip: switch (_session.fit) {
+                        DisplayFit.fit => 'Fit (cycle to 1:1 native pixels)',
+                        DisplayFit.original => '1:1 native (cycle to stretch fill)',
+                        DisplayFit.stretch => 'Stretch fill (cycle to aspect-fit)',
                       },
                       onPressed: () {
                         // Cycle: fit → original → stretch → fit.
@@ -481,22 +496,28 @@ class _SessionScreenState extends State<SessionScreen> {
                     _ToolbarButton(
                       icon: Icons.lock_outline,
                       label: 'LOCK',
+                      tooltip: 'Lock remote (Win + L)',
                       onPressed: _sendWinL,
                     ),
                     const SizedBox(width: 4),
                     _ToolbarButton(
                       icon: Icons.restart_alt,
                       label: 'REBOOT',
+                      tooltip: 'Restart the remote machine',
                       onPressed: _confirmReboot,
                     ),
                     const SizedBox(width: 4),
                     Container(width: 1, height: 16, color: t.border),
                     const SizedBox(width: 4),
-                    TactileButton(
-                      small: true,
-                      variant: TactileVariant.danger,
-                      onPressed: widget.onDisconnect,
-                      child: const Text('DISCONNECT'),
+                    Tooltip(
+                      message: 'Disconnect from this peer',
+                      waitDuration: const Duration(milliseconds: 350),
+                      child: TactileButton(
+                        small: true,
+                        variant: TactileVariant.danger,
+                        onPressed: widget.onDisconnect,
+                        child: const Text('DISCONNECT'),
+                      ),
                     ),
                   ],
                 ),
@@ -842,6 +863,7 @@ class _ToolbarButton extends StatelessWidget {
     this.active = false,
     this.activeColor,
     this.badge = 0,
+    this.tooltip,
   });
   final IconData icon;
   final String label;
@@ -849,10 +871,11 @@ class _ToolbarButton extends StatelessWidget {
   final bool active;
   final Color? activeColor;
   final int badge;
+  final String? tooltip;
 
   @override
   Widget build(BuildContext context) {
-    final btn = TactileButton(
+    final raw = TactileButton(
       small: true,
       variant: active
           ? (activeColor != null ? TactileVariant.danger : TactileVariant.primary)
@@ -867,6 +890,13 @@ class _ToolbarButton extends StatelessWidget {
         ],
       ),
     );
+    final btn = tooltip != null
+        ? Tooltip(
+            message: tooltip!,
+            waitDuration: const Duration(milliseconds: 350),
+            child: raw,
+          )
+        : raw;
     if (badge <= 0) return btn;
     return Stack(
       clipBehavior: Clip.none,

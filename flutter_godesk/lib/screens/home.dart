@@ -1113,9 +1113,24 @@ class _HomeScreenState extends State<HomeScreen> {
         peer: _lanPeers[i],
         isLast: i == _lanPeers.length - 1,
         onTap: () => widget.onConnect(_lanPeers[i]),
-        onEditAlias: () {}, // LAN peers aren't in the address book yet.
+        // LAN peer rename: persist to address book first (so the alias
+        // survives the next discovery sweep), then open the same alias
+        // dialog used for saved peers.
+        onEditAlias: () => _editLanPeerAlias(_lanPeers[i]),
       ),
     );
+  }
+
+  Future<void> _editLanPeerAlias(Peer peer) async {
+    // If the peer isn't yet in the persisted address book, save it first
+    // so `setPeerAlias` has a target. After this point the peer shows up
+    // on both Saved + LAN tabs.
+    final existing = _peers.any((p) => p.id == peer.id);
+    if (!existing) {
+      await _bridge.upsertPeer(peer);
+    }
+    if (!mounted) return;
+    await _editAlias(peer);
   }
 
   Widget _buildPeerList(GoDeskTheme t) {

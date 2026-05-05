@@ -1,6 +1,8 @@
 // Files screen — VU meters, transfer queue, completed list.
 // Port of godesk-skeuo-files.jsx.
 
+import 'dart:io';
+
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -62,12 +64,27 @@ class _FilesScreenState extends State<FilesScreen> {
       ));
       return;
     }
+    // Honour the "Open FS root on file transfer" toggle from Settings →
+    // Defaults. When enabled (default), the OS picker starts at the user's
+    // home/root; when disabled, the picker package picks its own last-used
+    // dir. RuDesktop 2.8.1532 parity.
+    String? initialDir;
+    final openRoot = (await _bridge.getOption('godesk-default-open-fs-root')).trim();
+    final wantRoot = openRoot.isEmpty || openRoot == 'Y';
+    if (wantRoot) {
+      initialDir = Platform.environment['USERPROFILE'] ??
+          Platform.environment['HOME'] ??
+          'C:\\';
+    }
     if (folder) {
-      final path = await FilePicker.platform.getDirectoryPath();
+      final path = await FilePicker.platform.getDirectoryPath(initialDirectory: initialDir);
       if (path == null) return;
       await _bridge.addTransfer(filePath: path, dir: TransferDir.send);
     } else {
-      final res = await FilePicker.platform.pickFiles(allowMultiple: true);
+      final res = await FilePicker.platform.pickFiles(
+        allowMultiple: true,
+        initialDirectory: initialDir,
+      );
       if (res == null) return;
       for (final f in res.files) {
         if (f.path != null) {
