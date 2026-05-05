@@ -109,6 +109,15 @@ class _GoDeskShellState extends State<GoDeskShell> {
 
   bool _keyHandler(KeyEvent event) {
     if (event is! KeyDownEvent) return false;
+    // Tab-switch shortcuts must not fire when the session overlay is up
+    // (those shortcuts there belong to the remote OS) or when any modifier
+    // is held — Ctrl+1..3 is reserved for switch-display in SessionScreen.
+    if (_session != null) return false;
+    if (HardwareKeyboard.instance.isControlPressed ||
+        HardwareKeyboard.instance.isAltPressed ||
+        HardwareKeyboard.instance.isMetaPressed) {
+      return false;
+    }
     final k = event.logicalKey;
     if (k == LogicalKeyboardKey.digit1) {
       setState(() => _tab = SkeuoTab.home);

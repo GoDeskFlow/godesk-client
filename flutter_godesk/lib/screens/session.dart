@@ -55,6 +55,42 @@ class _SessionScreenState extends State<SessionScreen> {
   Bridge get _bridge => BridgeProvider.of(context);
 
   @override
+  void initState() {
+    super.initState();
+    HardwareKeyboard.instance.addHandler(_globalKeyHandler);
+  }
+
+  /// Session-level keyboard shortcuts intercepted before they reach
+  /// `_RemoteFrame._onKey` (and thus before being forwarded to the
+  /// remote machine). Currently maps `Ctrl+1..9` → switch display when
+  /// the remote has multiple monitors.
+  bool _globalKeyHandler(KeyEvent event) {
+    if (event is! KeyDownEvent) return false;
+    final ctrl = HardwareKeyboard.instance.isControlPressed;
+    final alt = HardwareKeyboard.instance.isAltPressed;
+    final shift = HardwareKeyboard.instance.isShiftPressed;
+    if (!ctrl || alt || shift) return false;
+    final k = event.logicalKey;
+    final digits = <LogicalKeyboardKey>[
+      LogicalKeyboardKey.digit1,
+      LogicalKeyboardKey.digit2,
+      LogicalKeyboardKey.digit3,
+      LogicalKeyboardKey.digit4,
+      LogicalKeyboardKey.digit5,
+      LogicalKeyboardKey.digit6,
+      LogicalKeyboardKey.digit7,
+      LogicalKeyboardKey.digit8,
+      LogicalKeyboardKey.digit9,
+    ];
+    final idx = digits.indexOf(k);
+    if (idx < 0) return false;
+    if (idx >= _session.displayCount) return false;
+    if (_session.displayCount <= 1) return false;
+    _bridge.switchDisplay(idx);
+    return true; // Consume so the remote doesn't also receive Ctrl+N.
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (_wired) return;
@@ -92,6 +128,7 @@ class _SessionScreenState extends State<SessionScreen> {
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_globalKeyHandler);
     _chatSub?.cancel();
     _stateSub?.cancel();
     _noticeSub?.cancel();
@@ -108,6 +145,72 @@ class _SessionScreenState extends State<SessionScreen> {
   }
 
   bool _privacyOn(String key) => _session.privacyModes.contains(key);
+
+  /// Press-then-release a sequence of keys. Mirrors RustDesk's
+  /// `sendCAD()` / `sendKeyCombo()` helpers. Each entry is a
+  /// (LogicalKeyboardKey, PhysicalKeyboardKey) pair so we can report
+  /// both codes to the remote (matches the same wire shape as `_onKey`
+  /// inside the Texture's KeyboardListener).
+  Future<void> _sendCombo(List<(LogicalKeyboardKey, PhysicalKeyboardKey)> keys) async {
+    for (final k in keys) {
+      await _bridge.sendKey(
+        name: k.$1.debugName ?? 'unknown',
+        platformCode: k.$1.keyId,
+        positionCode: k.$2.usbHidUsage,
+        lockModes: 0,
+        down: true,
+      );
+    }
+    for (final k in keys.reversed) {
+      await _bridge.sendKey(
+        name: k.$1.debugName ?? 'unknown',
+        platformCode: k.$1.keyId,
+        positionCode: k.$2.usbHidUsage,
+        lockModes: 0,
+        down: false,
+      );
+    }
+  }
+
+  static const _ctrl = (LogicalKeyboardKey.controlLeft, PhysicalKeyboardKey.controlLeft);
+  static const _alt = (LogicalKeyboardKey.altLeft, PhysicalKeyboardKey.altLeft);
+  static const _meta = (LogicalKeyboardKey.metaLeft, PhysicalKeyboardKey.metaLeft);
+  static const _shift = (LogicalKeyboardKey.shiftLeft, PhysicalKeyboardKey.shiftLeft);
+
+  Future<void> _sendCtrlAltDel() => _sendCombo(<(LogicalKeyboardKey, PhysicalKeyboardKey)>[
+        _ctrl,
+        _alt,
+        (LogicalKeyboardKey.delete, PhysicalKeyboardKey.delete),
+      ]);
+
+  Future<void> _sendWinKey() => _sendCombo(const <(LogicalKeyboardKey, PhysicalKeyboardKey)>[
+        _meta,
+      ]);
+
+  Future<void> _sendWinL() => _sendCombo(<(LogicalKeyboardKey, PhysicalKeyboardKey)>[
+        _meta,
+        (LogicalKeyboardKey.keyL, PhysicalKeyboardKey.keyL),
+      ]);
+
+  Future<void> _sendAltTab() => _sendCombo(<(LogicalKeyboardKey, PhysicalKeyboardKey)>[
+        _alt,
+        (LogicalKeyboardKey.tab, PhysicalKeyboardKey.tab),
+      ]);
+
+  Future<void> _sendAltF4() => _sendCombo(<(LogicalKeyboardKey, PhysicalKeyboardKey)>[
+        _alt,
+        (LogicalKeyboardKey.f4, PhysicalKeyboardKey.f4),
+      ]);
+
+  Future<void> _sendCtrlShiftEsc() => _sendCombo(<(LogicalKeyboardKey, PhysicalKeyboardKey)>[
+        _ctrl,
+        _shift,
+        (LogicalKeyboardKey.escape, PhysicalKeyboardKey.escape),
+      ]);
+
+  Future<void> _sendPrintScreen() => _sendCombo(const <(LogicalKeyboardKey, PhysicalKeyboardKey)>[
+        (LogicalKeyboardKey.printScreen, PhysicalKeyboardKey.printScreen),
+      ]);
 
   Future<void> _confirmReboot() async {
     final t = Theme.of(context).extension<GoDeskTheme>()!;
@@ -330,10 +433,55 @@ class _SessionScreenState extends State<SessionScreen> {
                       ),
                     ],
                     const SizedBox(width: 4),
+                    PopupMenuButton<String>(
+                      tooltip: 'Send a hotkey combo',
+                      offset: const Offset(0, 28),
+                      onSelected: (action) {
+                        switch (action) {
+                          case 'cad':
+                            _sendCtrlAltDel();
+                          case 'winl':
+                            _sendWinL();
+                          case 'win':
+                            _sendWinKey();
+                          case 'altf4':
+                            _sendAltF4();
+                          case 'alttab':
+                            _sendAltTab();
+                          case 'ctrlshiftesc':
+                            _sendCtrlShiftEsc();
+                          case 'prtsc':
+                            _sendPrintScreen();
+                        }
+                      },
+                      itemBuilder: (_) => const <PopupMenuEntry<String>>[
+                        PopupMenuItem<String>(value: 'cad', child: Text('Ctrl + Alt + Del')),
+                        PopupMenuItem<String>(value: 'winl', child: Text('Win + L (lock)')),
+                        PopupMenuItem<String>(value: 'win', child: Text('Win key (Start menu)')),
+                        PopupMenuDivider(),
+                        PopupMenuItem<String>(value: 'alttab', child: Text('Alt + Tab')),
+                        PopupMenuItem<String>(value: 'altf4', child: Text('Alt + F4')),
+                        PopupMenuItem<String>(value: 'ctrlshiftesc', child: Text('Ctrl + Shift + Esc (Task Manager)')),
+                        PopupMenuItem<String>(value: 'prtsc', child: Text('PrtSc')),
+                      ],
+                      child: TactileButton(
+                        small: true,
+                        onPressed: null,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: const <Widget>[
+                            Icon(Icons.keyboard, size: 12),
+                            SizedBox(width: 4),
+                            Text('KEYS'),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
                     _ToolbarButton(
                       icon: Icons.lock_outline,
                       label: 'LOCK',
-                      onPressed: () {},
+                      onPressed: _sendWinL,
                     ),
                     const SizedBox(width: 4),
                     _ToolbarButton(

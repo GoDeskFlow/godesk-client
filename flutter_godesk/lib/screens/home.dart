@@ -173,6 +173,149 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// "+ ADD" button in the Saved tab header — manual peer entry without
+  /// having to connect first. RuDesktop's "Добавить адрес" parity.
+  Future<void> _addPeerDialog() async {
+    final t = Theme.of(context).extension<GoDeskTheme>()!;
+    final idCtl = TextEditingController();
+    final nameCtl = TextEditingController();
+    final tagCtl = TextEditingController();
+    PeerOS os = PeerOS.windows;
+
+    String? error;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          backgroundColor: t.panel,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+            side: BorderSide(color: t.border),
+          ),
+          title: Text('Add peer',
+              style: GDtype.ui(size: 14, weight: FontWeight.w700, color: t.heading)),
+          content: SizedBox(
+            width: 340,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                _addPeerLabel(t, 'Remote ID *'),
+                _lcdInput(t, idCtl, '123 456 789', mono: true, autofocus: true),
+                const SizedBox(height: 10),
+                _addPeerLabel(t, 'Display name'),
+                _lcdInput(t, nameCtl, "e.g. Maria's MacBook"),
+                const SizedBox(height: 10),
+                _addPeerLabel(t, 'Tag'),
+                _lcdInput(t, tagCtl, 'Personal'),
+                const SizedBox(height: 10),
+                _addPeerLabel(t, 'OS'),
+                Row(
+                  children: <Widget>[
+                    for (final entry in <(PeerOS, String)>[
+                      (PeerOS.windows, 'WIN'),
+                      (PeerOS.macos, 'MAC'),
+                      (PeerOS.linux, 'LINUX'),
+                    ])
+                      Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: TactileButton(
+                          small: true,
+                          variant: os == entry.$1
+                              ? TactileVariant.primary
+                              : TactileVariant.defaultStyle,
+                          onPressed: () => setLocal(() => os = entry.$1),
+                          child: Text(entry.$2),
+                        ),
+                      ),
+                  ],
+                ),
+                if (error != null) ...<Widget>[
+                  const SizedBox(height: 10),
+                  Text(error!,
+                      style: GDtype.ui(size: 11, color: const Color(0xFFE03030))),
+                ],
+              ],
+            ),
+          ),
+          actions: <Widget>[
+            TactileButton(
+              small: true,
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('CANCEL'),
+            ),
+            TactileButton(
+              small: true,
+              variant: TactileVariant.primary,
+              onPressed: () {
+                final id = idCtl.text.trim();
+                if (id.length < 6) {
+                  setLocal(() => error = 'ID is required (min 6 chars).');
+                  return;
+                }
+                if (_peers.any((p) => p.id.replaceAll(' ', '') == id.replaceAll(' ', ''))) {
+                  setLocal(() => error = 'A peer with this ID is already saved.');
+                  return;
+                }
+                Navigator.of(ctx).pop(true);
+              },
+              child: const Text('SAVE'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (ok != true) return;
+
+    final id = idCtl.text.trim();
+    final name = nameCtl.text.trim().isNotEmpty
+        ? nameCtl.text.trim()
+        : 'Peer $id';
+    final tag = tagCtl.text.trim().isNotEmpty ? tagCtl.text.trim() : 'Untagged';
+
+    await _bridge.upsertPeer(Peer(
+      id: id,
+      name: name,
+      os: os,
+      tag: tag,
+      lastSeen: 'just now',
+      status: PeerStatus.offline,
+    ));
+    idCtl.dispose();
+    nameCtl.dispose();
+    tagCtl.dispose();
+  }
+
+  Widget _addPeerLabel(GoDeskTheme t, String s) => Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Text(s, style: GDtype.ui(size: 11, color: t.subtle)),
+      );
+
+  Widget _lcdInput(
+    GoDeskTheme t,
+    TextEditingController ctl,
+    String hint, {
+    bool mono = false,
+    bool autofocus = false,
+  }) =>
+      LCDPanel(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        child: TextField(
+          controller: ctl,
+          autofocus: autofocus,
+          cursorColor: t.lcdInk,
+          decoration: InputDecoration(
+            border: InputBorder.none,
+            isCollapsed: true,
+            hintText: hint,
+            hintStyle: lcdReadout(theme: t, size: 13).copyWith(color: t.lcdDim),
+          ),
+          style: lcdReadout(theme: t, size: 13),
+        ),
+      );
+
   Future<void> _editAlias(Peer peer) async {
     final controller = TextEditingController(text: peer.alias ?? '');
     final t = Theme.of(context).extension<GoDeskTheme>()!;
@@ -743,6 +886,19 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         )
                       else ...<Widget>[
+                        TactileButton(
+                          small: true,
+                          onPressed: _addPeerDialog,
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: <Widget>[
+                              Icon(Icons.add, size: 11),
+                              SizedBox(width: 4),
+                              Text('ADD'),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 6),
                         _sortMenu(t),
                         const SizedBox(width: 6),
                         _entriesPlate(t),

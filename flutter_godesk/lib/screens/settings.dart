@@ -1,13 +1,16 @@
 // Settings screen — General / Video & Audio / Security / Network / About.
 // Port of godesk-skeuo-screens.jsx → SkeuoSettings.
 
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
 import '../bridge/bridge.dart';
 import '../bridge/provider.dart';
 import '../config/infra.dart';
+import '../util/platform_polish.dart' show crashLogPath;
 import '../theme/tokens.dart';
 import '../theme/tweaks.dart';
 import '../kit/knob.dart';
@@ -1056,6 +1059,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           },
         ),
         const SizedBox(height: 12),
+        const _LatencySparklinePanel(),
+        const SizedBox(height: 12),
+        const _LogsPanel(),
+        const SizedBox(height: 12),
         MetalPanel(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1366,6 +1373,325 @@ class _ThemeControlsState extends State<_ThemeControls> {
           ],
         ),
       ],
+    );
+  }
+}
+
+/// Settings → About: rolling sparkline of recent relay latency samples.
+/// Subscribes to `bridge.diagnostics()` and stores the last [_kSparkN]
+/// values; renders an LCD-style chart on a small MetalPanel.
+class _LatencySparklinePanel extends StatefulWidget {
+  const _LatencySparklinePanel();
+
+  @override
+  State<_LatencySparklinePanel> createState() => _LatencySparklinePanelState();
+}
+
+const int _kSparkN = 60; // ~1 minute @ 1 sample/sec
+
+class _LatencySparklinePanelState extends State<_LatencySparklinePanel> {
+  final List<int> _samples = <int>[];
+  StreamSubscription<Diagnostics>? _sub;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _sub ??= BridgeProvider.of(context).diagnostics().listen((d) {
+      if (!mounted) return;
+      setState(() {
+        _samples.add(d.latencyMs);
+        if (_samples.length > _kSparkN) {
+          _samples.removeRange(0, _samples.length - _kSparkN);
+        }
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).extension<GoDeskTheme>()!;
+    final last = _samples.isEmpty ? 0 : _samples.last;
+    final avg = _samples.isEmpty
+        ? 0
+        : (_samples.reduce((a, b) => a + b) / _samples.length).round();
+    final peak = _samples.isEmpty
+        ? 0
+        : _samples.reduce((a, b) => a > b ? a : b);
+    return MetalPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const SectionLabel('Latency (last 60s)'),
+          const SizedBox(height: 10),
+          LCDPanel(
+            padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+            child: Row(
+              children: <Widget>[
+                _spark(t, label: 'NOW', value: last),
+                const SizedBox(width: 14),
+                _spark(t, label: 'AVG', value: avg),
+                const SizedBox(width: 14),
+                _spark(t, label: 'PEAK', value: peak),
+                const Spacer(),
+                Text('${_samples.length}/$_kSparkN',
+                    style: lcdReadout(theme: t, size: 10).copyWith(color: t.lcdDim)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          LCDPanel(
+            padding: const EdgeInsets.all(8),
+            child: SizedBox(
+              height: 60,
+              width: double.infinity,
+              child: CustomPaint(
+                painter: _SparklinePainter(
+                  samples: _samples,
+                  ink: t.lcdInk,
+                  dim: t.lcdDim,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _spark(GoDeskTheme t, {required String label, required int value}) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Text(label,
+            style: GDtype.mono(size: 9, color: t.lcdDim, letterSpacing: 0.5)),
+        const SizedBox(width: 4),
+        Text('${value}ms', style: lcdReadout(theme: t, size: 13)),
+      ],
+    );
+  }
+}
+
+class _SparklinePainter extends CustomPainter {
+  _SparklinePainter({
+    required this.samples,
+    required this.ink,
+    required this.dim,
+  });
+  final List<int> samples;
+  final Color ink;
+  final Color dim;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Baseline grid.
+    final gridPaint = Paint()
+      ..color = dim.withValues(alpha: 0.4)
+      ..strokeWidth = 0.5;
+    for (var i = 1; i < 4; i++) {
+      final y = size.height * i / 4;
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
+    }
+    if (samples.length < 2) return;
+
+    // Auto-scale Y to peak (min 50ms ceiling so a flat 0 still shows).
+    final peak = samples.reduce((a, b) => a > b ? a : b);
+    final ceiling = peak < 50 ? 50 : (peak * 1.15).ceil();
+    final dx = size.width / (_kSparkN - 1);
+    final path = Path();
+    for (var i = 0; i < samples.length; i++) {
+      final x = i * dx;
+      final norm = samples[i] / ceiling;
+      final y = size.height - norm.clamp(0.0, 1.0) * size.height;
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+    }
+
+    final glow = Paint()
+      ..color = ink.withValues(alpha: 0.35)
+      ..strokeWidth = 3
+      ..style = PaintingStyle.stroke
+      ..strokeJoin = StrokeJoin.round
+      ..strokeCap = StrokeCap.round;
+    final line = Paint()
+      ..color = ink
+      ..strokeWidth = 1.4
+      ..style = PaintingStyle.stroke
+      ..strokeJoin = StrokeJoin.round
+      ..strokeCap = StrokeCap.round;
+    canvas.drawPath(path, glow);
+    canvas.drawPath(path, line);
+  }
+
+  @override
+  bool shouldRepaint(_SparklinePainter old) =>
+      old.samples.length != samples.length ||
+      (old.samples.isNotEmpty && samples.isNotEmpty && old.samples.last != samples.last);
+}
+
+/// Settings → About: tail of the most recent GoDesk crash/error log.
+/// Reads `crashLogPath` (set by initCrashLog at startup) and shows the
+/// last ~120 lines in an LCD-styled scroll box. RuDesktop's "Открыть
+/// логи" parity but inline rather than launching Notepad.
+class _LogsPanel extends StatefulWidget {
+  const _LogsPanel();
+
+  @override
+  State<_LogsPanel> createState() => _LogsPanelState();
+}
+
+class _LogsPanelState extends State<_LogsPanel> {
+  String _content = '';
+  String? _err;
+  bool _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  Future<void> _refresh() async {
+    setState(() {
+      _loading = true;
+      _err = null;
+    });
+    try {
+      final path = crashLogPath;
+      if (path == null) {
+        setState(() {
+          _content = '';
+          _err = 'Crash log not initialised yet — restart the app.';
+          _loading = false;
+        });
+        return;
+      }
+      final f = File(path);
+      if (!f.existsSync()) {
+        setState(() {
+          _content = '';
+          _err = 'No log file at $path (no errors logged yet).';
+          _loading = false;
+        });
+        return;
+      }
+      final raw = await f.readAsString();
+      final lines = const LineSplitter().convert(raw);
+      const tail = 120;
+      final shown = lines.length > tail
+          ? lines.sublist(lines.length - tail).join('\n')
+          : raw;
+      setState(() {
+        _content = shown;
+        _loading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _err = 'Failed to read log: $e';
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _openFolder() async {
+    final path = crashLogPath;
+    if (path == null) return;
+    try {
+      // Highlight the log file inside its folder.
+      await Process.start('explorer.exe', <String>['/select,', path]);
+    } catch (_) {
+      // Fallback: just open the parent dir.
+      try {
+        final dir = File(path).parent.path;
+        await Process.start('explorer.exe', <String>[dir]);
+      } catch (_) {}
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).extension<GoDeskTheme>()!;
+    final path = crashLogPath ?? '(not yet open)';
+    return MetalPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              const SectionLabel('Logs'),
+              const Spacer(),
+              TactileButton(
+                small: true,
+                onPressed: _loading ? null : _refresh,
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Icon(Icons.refresh, size: 11),
+                    SizedBox(width: 4),
+                    Text('REFRESH'),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 6),
+              TactileButton(
+                small: true,
+                onPressed: _openFolder,
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Icon(Icons.folder_open, size: 11),
+                    SizedBox(width: 4),
+                    Text('OPEN FOLDER'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(path, style: GDtype.mono(size: 10, color: t.subtle)),
+          const SizedBox(height: 8),
+          LCDPanel(
+            padding: const EdgeInsets.all(8),
+            child: SizedBox(
+              height: 180,
+              width: double.infinity,
+              child: _err != null
+                  ? Center(
+                      child: Text(_err!,
+                          textAlign: TextAlign.center,
+                          style: lcdReadout(theme: t, size: 11)
+                              .copyWith(color: t.lcdDim)),
+                    )
+                  : _content.isEmpty
+                      ? Center(
+                          child: Text(
+                              _loading
+                                  ? 'Loading…'
+                                  : 'No log content yet — quiet session.',
+                              style: lcdReadout(theme: t, size: 11)
+                                  .copyWith(color: t.lcdDim)),
+                        )
+                      : Scrollbar(
+                          child: SingleChildScrollView(
+                            reverse: true,
+                            child: SelectableText(
+                              _content,
+                              style: lcdReadout(theme: t, size: 10),
+                            ),
+                          ),
+                        ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
