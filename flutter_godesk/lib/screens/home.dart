@@ -65,6 +65,15 @@ class _HomeScreenState extends State<HomeScreen> {
   PeerSort _sort = PeerSort.recent;
   bool _sortLoaded = false;
 
+  /// OTP rotation timer. RustDesk regenerates the connect-time password
+  /// after [_otpRefreshSec] seconds of inactivity (matches the upstream
+  /// `password-timeout-secs` default of 360s = 6min). We tick a local
+  /// counter and call `regeneratePassword()` when it hits 0; we also
+  /// reset on the manual NEW button press.
+  static const int _otpRefreshSec = 360;
+  int _otpSecondsLeft = _otpRefreshSec;
+  Timer? _otpTimer;
+
   Bridge get _bridge => BridgeProvider.of(context);
 
   /// Filter peers by [_searchInput] — matches displayName, tag, or id (case-insensitive).
@@ -123,6 +132,18 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     HardwareKeyboard.instance.addHandler(_homeKeyHandler);
+    _otpTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() {
+        _otpSecondsLeft -= 1;
+        if (_otpSecondsLeft <= 0) {
+          _otpSecondsLeft = _otpRefreshSec;
+          _bridge.regeneratePassword().then((p) {
+            if (mounted) setState(() => _password = p);
+          });
+        }
+      });
+    });
   }
 
   /// Ctrl+F → focus the address-book search field. If the user is on the
@@ -174,6 +195,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_homeKeyHandler);
+    _otpTimer?.cancel();
     _peerInput.dispose();
     _searchInput.dispose();
     _searchFocus.dispose();
@@ -186,6 +208,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_identity == null) return;
     Clipboard.setData(ClipboardData(text: _identity!.id));
     setState(() => _copiedId = true);
+    _showCopyToast('ID copied — ${_identity!.id}');
     Future<void>.delayed(const Duration(milliseconds: 1400), () {
       if (mounted) setState(() => _copiedId = false);
     });
@@ -194,9 +217,28 @@ class _HomeScreenState extends State<HomeScreen> {
   void _copyPw() {
     Clipboard.setData(ClipboardData(text: _password));
     setState(() => _copiedPw = true);
+    _showCopyToast('Password copied — refreshes in ${_formatMmSs(_otpSecondsLeft)}');
     Future<void>.delayed(const Duration(milliseconds: 1400), () {
       if (mounted) setState(() => _copiedPw = false);
     });
+  }
+
+  void _showCopyToast(String message) {
+    final m = ScaffoldMessenger.maybeOf(context);
+    if (m == null) return;
+    m.hideCurrentSnackBar();
+    m.showSnackBar(SnackBar(
+      duration: const Duration(milliseconds: 1800),
+      behavior: SnackBarBehavior.floating,
+      width: 360,
+      content: Row(
+        children: <Widget>[
+          const Icon(Icons.check_circle, size: 14, color: Color(0xFF34D058)),
+          const SizedBox(width: 8),
+          Expanded(child: Text(message)),
+        ],
+      ),
+    ));
   }
 
   Future<void> _openInviteManager() async {
@@ -644,6 +686,33 @@ class _HomeScreenState extends State<HomeScreen> {
                   style: lcdReadout(theme: t, size: 18),
                 ),
               ),
+              const SizedBox(height: 6),
+              Row(
+                children: <Widget>[
+                  Icon(Icons.schedule, size: 10, color: t.subtle),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Refreshes in ${_formatMmSs(_otpSecondsLeft)}',
+                    style: GDtype.mono(size: 9, color: t.subtle, letterSpacing: 0.5),
+                  ),
+                  const Spacer(),
+                  // Thin bar showing how much of the cycle is left.
+                  SizedBox(
+                    width: 80,
+                    height: 3,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(2),
+                      child: LinearProgressIndicator(
+                        value: _otpSecondsLeft / _otpRefreshSec,
+                        backgroundColor: t.bg,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          _otpSecondsLeft < 60 ? const Color(0xFFE03030) : t.accent,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 8),
               Row(
                 children: <Widget>[
@@ -666,7 +735,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   Expanded(
                     child: TactileButton(
                       small: true,
-                      onPressed: () => setState(() => _password = genPassword()),
+                      onPressed: () async {
+                        final p = await _bridge.regeneratePassword();
+                        if (!mounted) return;
+                        setState(() {
+                          _password = p;
+                          _otpSecondsLeft = _otpRefreshSec;
+                        });
+                      },
                       child: const Row(
                         mainAxisSize: MainAxisSize.min,
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -791,6 +867,35 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                         style: lcdReadout(theme: t, size: 18),
+                      ),
+                    ),
+                  ),
+                  // Paste-from-clipboard helper — quick win when a friend
+                  // sent the ID over chat. Reads system clipboard, picks
+                  // out the first 9-digit-ish substring, formats and fills
+                  // the input. No-op + soft hint if nothing usable found.
+                  const SizedBox(width: 6),
+                  Tooltip(
+                    message: 'Paste ID from clipboard',
+                    child: MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: _pasteIdFromClipboard,
+                        child: Container(
+                          height: 40,
+                          width: 40,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: <Color>[t.panelHi, t.panel],
+                            ),
+                            borderRadius: BorderRadius.circular(5),
+                            border: Border.all(color: t.border),
+                          ),
+                          child: Icon(Icons.content_paste, size: 16, color: t.body),
+                        ),
                       ),
                     ),
                   ),
@@ -1265,12 +1370,14 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
     }
+    final q = _searchInput.text.trim();
     return ListView.builder(
       padding: EdgeInsets.zero,
       itemCount: visible.length,
       itemBuilder: (context, i) => _PeerRow(
         peer: visible[i],
         isLast: i == visible.length - 1,
+        searchQuery: q,
         onTap: () => _connectPeer(visible[i]),
         onEditAlias: () => _editAlias(visible[i]),
         onConnectWithMode: (mode) {
@@ -1294,6 +1401,39 @@ class _HomeScreenState extends State<HomeScreen> {
     if (wire == null || wire.isEmpty) wire = _mode.wireValue;
     _pushRecentId(p.id);
     widget.onConnect(p, mode: wire);
+  }
+
+  /// Read the OS clipboard, pick out the first ≥6-digit substring, format
+  /// it as a peer ID, and drop it into the input. Surfaces a SnackBar when
+  /// the clipboard has nothing usable.
+  Future<void> _pasteIdFromClipboard() async {
+    final raw = (await Clipboard.getData(Clipboard.kTextPlain))?.text ?? '';
+    if (!mounted) return;
+    final digits = raw.replaceAll(RegExp(r'\D'), '');
+    if (digits.length < 6) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
+        duration: Duration(milliseconds: 1800),
+        behavior: SnackBarBehavior.floating,
+        width: 320,
+        content: Text('Clipboard has no peer ID — copy a 9-digit ID first.'),
+      ));
+      return;
+    }
+    final formatted = formatId(digits);
+    if (!mounted) return;
+    setState(() {
+      _peerInput.value = TextEditingValue(
+        text: formatted,
+        selection: TextSelection.collapsed(offset: formatted.length),
+      );
+    });
+  }
+
+  String _formatMmSs(int seconds) {
+    final s = seconds < 0 ? 0 : seconds;
+    final m = s ~/ 60;
+    final r = s % 60;
+    return '$m:${r.toString().padLeft(2, '0')}';
   }
 
   Future<void> _toggleFav(Peer p) async {
@@ -1355,6 +1495,7 @@ class _PeerRow extends StatefulWidget {
     this.onConnectWithMode,
     this.onToggleFav,
     this.onRemove,
+    this.searchQuery = '',
   });
   final Peer peer;
   final bool isLast;
@@ -1369,6 +1510,9 @@ class _PeerRow extends StatefulWidget {
   /// Right-click context menu: forget the peer (when null, the option
   /// is hidden — used for LAN peers).
   final VoidCallback? onRemove;
+  /// Live search query — when non-empty, the row highlights matching
+  /// substrings (case-insensitive) in displayName / id / tag.
+  final String searchQuery;
 
   @override
   State<_PeerRow> createState() => _PeerRowState();
@@ -1475,9 +1619,14 @@ class _PeerRowState extends State<_PeerRow> {
                         Row(
                           children: <Widget>[
                             Flexible(
-                              child: Text(widget.peer.displayName,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: GDtype.ui(size: 12, weight: FontWeight.w700, color: t.heading)),
+                              child: _HighlightedText(
+                                text: widget.peer.displayName,
+                                query: widget.searchQuery,
+                                style: GDtype.ui(
+                                    size: 12, weight: FontWeight.w700, color: t.heading),
+                                highlight: t.accent,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                             if (hasAlias) ...<Widget>[
                               const SizedBox(width: 6),
@@ -1486,9 +1635,13 @@ class _PeerRowState extends State<_PeerRow> {
                           ],
                         ),
                         const SizedBox(height: 1),
-                        Text(
-                          hasAlias ? '${widget.peer.name} · ${widget.peer.id}' : widget.peer.id,
+                        _HighlightedText(
+                          text: hasAlias
+                              ? '${widget.peer.name} · ${widget.peer.id}'
+                              : widget.peer.id,
+                          query: widget.searchQuery,
                           style: GDtype.mono(size: 10, color: t.subtle),
+                          highlight: t.accent,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ],
@@ -1693,6 +1846,61 @@ class _AddressBookEmpty extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Renders [text] with case-insensitive matches of [query] painted in
+/// [highlight]. Empty/whitespace query → plain text. Used in address
+/// book rows to make the search hit obvious without re-styling the
+/// entire string.
+class _HighlightedText extends StatelessWidget {
+  const _HighlightedText({
+    required this.text,
+    required this.query,
+    required this.style,
+    required this.highlight,
+    this.overflow,
+  });
+  final String text;
+  final String query;
+  final TextStyle style;
+  final Color highlight;
+  final TextOverflow? overflow;
+
+  @override
+  Widget build(BuildContext context) {
+    final q = query.trim();
+    if (q.isEmpty) {
+      return Text(text, style: style, overflow: overflow);
+    }
+    final lowerText = text.toLowerCase();
+    final lowerQ = q.toLowerCase();
+    final spans = <TextSpan>[];
+    var cursor = 0;
+    while (cursor < text.length) {
+      final hit = lowerText.indexOf(lowerQ, cursor);
+      if (hit < 0) {
+        spans.add(TextSpan(text: text.substring(cursor)));
+        break;
+      }
+      if (hit > cursor) {
+        spans.add(TextSpan(text: text.substring(cursor, hit)));
+      }
+      spans.add(TextSpan(
+        text: text.substring(hit, hit + q.length),
+        style: TextStyle(
+          color: highlight,
+          fontWeight: FontWeight.w800,
+          backgroundColor: highlight.withValues(alpha: 0.12),
+        ),
+      ));
+      cursor = hit + q.length;
+    }
+    return Text.rich(
+      TextSpan(style: style, children: spans),
+      overflow: overflow,
+      maxLines: 1,
     );
   }
 }

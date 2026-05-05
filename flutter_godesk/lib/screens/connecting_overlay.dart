@@ -38,6 +38,8 @@ class _ConnectingOverlayState extends State<ConnectingOverlay>
     'Connected',
   ];
   int _stage = 0;
+  bool _failed = false;
+  String? _failMessage;
   StreamSubscription<ConnectEvent>? _sub;
   late final AnimationController _pulse;
 
@@ -63,6 +65,13 @@ class _ConnectingOverlayState extends State<ConnectingOverlay>
 
   void _onEvent(ConnectEvent e) {
     if (!mounted) return;
+    if (e.stage == ConnectStage.failed) {
+      setState(() {
+        _failed = true;
+        _failMessage = e.message ?? 'Connection failed.';
+      });
+      return;
+    }
     final newStage = switch (e.stage) {
       ConnectStage.resolving => 0,
       ConnectStage.tunnel => 1,
@@ -70,12 +79,28 @@ class _ConnectingOverlayState extends State<ConnectingOverlay>
       ConnectStage.connected => 3,
       ConnectStage.failed => _stage,
     };
-    setState(() => _stage = newStage);
+    setState(() {
+      _stage = newStage;
+      _failed = false;
+      _failMessage = null;
+    });
     if (e.stage == ConnectStage.connected) {
       Future<void>.delayed(const Duration(milliseconds: 700), () {
         if (mounted) widget.onComplete();
       });
     }
+  }
+
+  Future<void> _retry() async {
+    if (!mounted) return;
+    setState(() {
+      _failed = false;
+      _failMessage = null;
+      _stage = 0;
+    });
+    await BridgeProvider.of(context).cancelConnect();
+    if (!mounted) return;
+    BridgeProvider.of(context).connect(widget.peerId, mode: widget.mode);
   }
 
   @override
@@ -167,23 +192,102 @@ class _ConnectingOverlayState extends State<ConnectingOverlay>
               ),
             ),
             const SizedBox(height: 16),
-            MouseRegion(
-              cursor: SystemMouseCursors.click,
-              child: GestureDetector(
-                onTap: widget.onCancel,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: t.border),
+            if (_failed) ...<Widget>[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0x22E03030),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFE03030)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    const Icon(Icons.error_outline, size: 14, color: Color(0xFFE03030)),
+                    const SizedBox(width: 8),
+                    Text(
+                      _failMessage ?? 'Connection failed.',
+                      style: GDtype.ui(size: 12, weight: FontWeight.w600, color: t.heading),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onTap: widget.onCancel,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: t.border),
+                        ),
+                        child: Text(
+                          'Cancel',
+                          style: GDtype.ui(size: 13, weight: FontWeight.w500, color: t.subtle),
+                        ),
+                      ),
+                    ),
                   ),
-                  child: Text(
-                    'Cancel',
-                    style: GDtype.ui(size: 13, weight: FontWeight.w500, color: t.subtle),
+                  const SizedBox(width: 8),
+                  MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onTap: _retry,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: <Color>[t.accent, t.accentDark],
+                          ),
+                          boxShadow: <BoxShadow>[
+                            BoxShadow(
+                                color: t.accentGlow.withValues(alpha: 1 / 3),
+                                blurRadius: 10),
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: const <Widget>[
+                            Icon(Icons.replay, size: 14, color: Colors.white),
+                            SizedBox(width: 6),
+                            Text('Retry',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ] else
+              MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: GestureDetector(
+                  onTap: widget.onCancel,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: t.border),
+                    ),
+                    child: Text(
+                      'Cancel',
+                      style: GDtype.ui(size: 13, weight: FontWeight.w500, color: t.subtle),
+                    ),
                   ),
                 ),
               ),
-            ),
           ],
         ),
       ),

@@ -46,10 +46,17 @@ class TactileButton extends StatefulWidget {
 
 class _TactileButtonState extends State<TactileButton> {
   bool _pressed = false;
+  bool _hovered = false;
 
   void _setPressed(bool v) {
     if (widget._disabled) return;
     setState(() => _pressed = v);
+  }
+
+  void _setHovered(bool v) {
+    if (widget._disabled) return;
+    if (_hovered == v) return;
+    setState(() => _hovered = v);
   }
 
   @override
@@ -113,27 +120,41 @@ class _TactileButtonState extends State<TactileButton> {
     final glow = isPrimary && !_pressed
         ? <BoxShadow>[
             BoxShadow(
-              color: t.accentGlow.withValues(alpha: 1 / 3), // 0x55 ≈ 1/3
-              blurRadius: 12,
+              // Hover bumps the halo a bit for primary buttons.
+              color: t.accentGlow
+                  .withValues(alpha: (_hovered && !disabled) ? 0.5 : 1 / 3),
+              blurRadius: (_hovered && !disabled) ? 16 : 12,
             ),
           ]
         : const <BoxShadow>[];
 
+    // Hover state lifts the drop shadow a tiny bit (1px → 3px) and bumps
+    // glow opacity for primary buttons so the cursor target gets clear
+    // visual feedback. Disabled buttons stay flat.
+    final hoverActive = _hovered && !_pressed && !disabled;
     final dropShadow = _pressed
         ? const <BoxShadow>[]
         : <BoxShadow>[
             BoxShadow(
               color: Colors.black.withValues(
-                alpha: ((isPrimary || isDanger) ? 0.18 : 0.12) * t.intensity,
+                alpha: ((isPrimary || isDanger) ? 0.18 : 0.12) *
+                    t.intensity *
+                    (hoverActive ? 1.4 : 1.0),
               ),
-              offset: Offset(0, (isPrimary || isDanger) ? 2 : 1),
-              blurRadius: (isPrimary || isDanger) ? 4 : 2,
+              offset: Offset(0, (isPrimary || isDanger)
+                  ? (hoverActive ? 4 : 2)
+                  : (hoverActive ? 3 : 1)),
+              blurRadius: (isPrimary || isDanger)
+                  ? (hoverActive ? 8 : 4)
+                  : (hoverActive ? 5 : 2),
             ),
           ];
 
     final reduced = reducedMotion(context);
     return MouseRegion(
       cursor: disabled ? SystemMouseCursors.forbidden : SystemMouseCursors.click,
+      onEnter: (_) => _setHovered(true),
+      onExit: (_) => _setHovered(false),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTapDown: (_) => _setPressed(true),
@@ -141,10 +162,12 @@ class _TactileButtonState extends State<TactileButton> {
         onTapCancel: () => _setPressed(false),
         onTap: widget.onPressed,
         child: AnimatedContainer(
-          duration: reduced ? Duration.zero : const Duration(milliseconds: 60),
+          duration: reduced ? Duration.zero : const Duration(milliseconds: 120),
           transform: (_pressed && !reduced)
               ? Matrix4.translationValues(0, 1, 0)
-              : Matrix4.identity(),
+              : (hoverActive && !reduced)
+                  ? Matrix4.translationValues(0, -1, 0)
+                  : Matrix4.identity(),
           constraints: BoxConstraints(
             minHeight: height,
             maxHeight: height,
