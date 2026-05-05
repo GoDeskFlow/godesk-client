@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- App sandbox is left ON for store-readiness, but with the network +
+	     file-read scopes a remote-desktop client actually needs. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+
+	<!-- We make outbound TLS to godeskflow.com (rendezvous, relay). -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+
+	<!-- Reverse-direct mode (LAN P2P) needs to listen for incoming
+	     connections from the operator's machine. -->
+	<key>com.apple.security.network.server</key>
+	<true/>
+
+	<!-- Drag-drop + ADD FILES picker. -->
+	<key>com.apple.security.files.user-selected.read-only</key>
+	<true/>
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+
+	<!-- Audio capture for in-session voice chat. -->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+</dict>
+</plist>

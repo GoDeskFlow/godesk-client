@@ -207,15 +207,27 @@ class TrayController with TrayListener, WindowListener {
     // Intercept Close button → hide instead of quit.
     await windowManager.setPreventClose(true);
 
-    await trayManager.setIcon('assets/icons/tray.ico');
-    await trayManager.setToolTip('GoDesk — encrypted remote desktop');
-    await trayManager.setContextMenu(Menu(items: <MenuItem>[
-      MenuItem(key: 'show', label: 'Show GoDesk'),
-      MenuItem(key: 'hide', label: 'Hide to tray'),
-      MenuItem.separator(),
-      MenuItem(key: 'quit', label: 'Quit GoDesk'),
-    ]));
-    trayManager.addListener(this);
+    // Platform-specific tray icon. Windows uses .ico for high-DPI tray
+    // rendering; macOS/Linux fall back to a PNG. If the platform-specific
+    // file is missing, swallow the error so the rest of the app still runs
+    // (tray is non-critical UX).
+    try {
+      final iconPath = Platform.isWindows
+          ? 'assets/icons/tray.ico'
+          : 'assets/icons/tray.png';
+      await trayManager.setIcon(iconPath);
+      await trayManager.setToolTip('GoDesk — encrypted remote desktop');
+      await trayManager.setContextMenu(Menu(items: <MenuItem>[
+        MenuItem(key: 'show', label: 'Show GoDesk'),
+        MenuItem(key: 'hide', label: 'Hide to tray'),
+        MenuItem.separator(),
+        MenuItem(key: 'quit', label: 'Quit GoDesk'),
+      ]));
+      trayManager.addListener(this);
+    } catch (e) {
+      // ignore: avoid_print
+      print('[GoDesk] tray init skipped: $e');
+    }
   }
 
   @override

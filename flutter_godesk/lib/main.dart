@@ -1,5 +1,7 @@
 // flutter_godesk — entry point.
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import 'app/godesk_app.dart';
@@ -16,8 +18,14 @@ import 'util/platform_polish.dart';
 /// to use the production FFI bridge (loads librustdesk.dll). Default is
 /// `MockBridge` so `flutter run` from a fresh checkout still works without
 /// a Rust core build.
-const bool _kUseRealBridge =
+///
+/// macOS / Linux: RealBridge requires per-platform `librustdesk` binaries
+/// that aren't built yet. Until those land, those platforms always run
+/// the mock UI regardless of this define.
+const bool _kUseRealBridgeRequested =
     bool.fromEnvironment('GODESK_REAL_BRIDGE', defaultValue: false);
+
+bool get _kUseRealBridge => _kUseRealBridgeRequested && Platform.isWindows;
 
 Future<void> main() async {
   // Single-instance lock first — if a copy is already running, exit before
