@@ -239,6 +239,35 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             style: lcdReadout(theme: t, size: 16),
           ),
         ),
+        const SizedBox(height: 6),
+        // Soft validation: trimmed name must be 0 (empty → fallback to
+        // system hostname) or >= 2 chars. 1-char names get rejected with
+        // a hint, mirroring RustDesk's `set_local_name` behavior.
+        Builder(builder: (_) {
+          final trimmed = _name.trim();
+          if (trimmed.isEmpty) {
+            return Text(
+              'Empty → GoDesk will advertise your system hostname.',
+              style: GDtype.ui(size: 10, color: t.subtle),
+            );
+          }
+          if (trimmed.length < 2) {
+            return Text(
+              'Name needs at least 2 characters.',
+              style: GDtype.ui(size: 10, color: const Color(0xFFE03030)),
+            );
+          }
+          if (trimmed.length > 64) {
+            return Text(
+              'Name is too long (max 64 chars). It will be truncated.',
+              style: GDtype.ui(size: 10, color: const Color(0xFFE03030)),
+            );
+          }
+          return Text(
+            'Will broadcast as "$trimmed".',
+            style: GDtype.ui(size: 10, color: t.subtle),
+          );
+        }),
         const SizedBox(height: 14),
         Align(
           alignment: Alignment.centerLeft,
@@ -271,7 +300,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             ),
             TactileButton(
               variant: TactileVariant.primary,
-              onPressed: () => setState(() => _step = 2),
+              onPressed: _identifyValid ? () => setState(() => _step = 2) : null,
               child: const Row(
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
@@ -285,6 +314,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         ),
       ],
     );
+  }
+
+  /// Trimmed name is empty (use hostname fallback) OR ≥2 chars.
+  bool get _identifyValid {
+    final t = _name.trim();
+    return t.isEmpty || t.length >= 2;
   }
 
   Widget _stepPermissions(GoDeskTheme t) {
@@ -462,7 +497,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               // name → leave RustDesk default (machine hostname).
               final name = _name.trim();
               if (name.isNotEmpty) {
-                await BridgeProvider.of(context).setOption('hostname', name);
+                final clamped = name.length > 64 ? name.substring(0, 64) : name;
+                await BridgeProvider.of(context).setOption('hostname', clamped);
               }
               widget.onComplete();
             },

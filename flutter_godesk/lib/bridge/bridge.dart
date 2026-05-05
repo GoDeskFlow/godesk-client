@@ -230,6 +230,23 @@ abstract class Bridge {
   Future<void> cancelTransfer(int id);
   Future<void> clearCompleted();
 
+  /// Re-enqueue a previously-failed transfer. The implementation may
+  /// reset progress to 0 and clear the failed flag, or actually re-issue
+  /// the underlying RustDesk file-transfer call. Mock just resets the
+  /// item; RealBridge re-issues `session_send_files`.
+  Future<void> retryTransfer(int id);
+
+  /// Dismiss a failed transfer from the queue without retrying. Distinct
+  /// from cancelTransfer (which targets active transfers and writes
+  /// `failed=true` so the user still sees the failure).
+  Future<void> dismissFailed(int id);
+
+  /// Re-arrange the queue by moving the item with [movingId] to right
+  /// before [beforeId]. When [beforeId] is null, the item is moved to the
+  /// end. Working in ID-space keeps the API resilient to whatever the UI
+  /// (or another consumer) is currently sorting by.
+  Future<void> reorderTransfer({required int movingId, int? beforeId});
+
   // — Invite links (RuDesktop 2.9.448 parity) —
   /// Build a shareable URL like `https://godeskflow.com/c/<base64(id|otp)>`.
   /// Receiver clicking should open GoDesk and prefill the connect form.

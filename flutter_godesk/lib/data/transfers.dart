@@ -20,6 +20,8 @@ class TransferItem {
     this.done = false,
     this.queued = false,
     this.isFolder = false,
+    this.failed = false,
+    this.failReason,
   });
 
   final int id;
@@ -27,7 +29,7 @@ class TransferItem {
   final int size;
   int sent;
   final TransferDir dir;
-  final int speed;
+  int speed;
   int eta;
   bool done;
   bool queued;
@@ -36,7 +38,18 @@ class TransferItem {
   /// ordering in the queue (RuDesktop 2.8.1532 parity).
   final bool isFolder;
 
-  double get progress => done ? 1.0 : queued ? 0.0 : sent / size;
+  /// Failed state — set when the Rust core reports a transfer error.
+  /// `failed` items are kept in the queue (rather than auto-removed) so
+  /// the user can choose to retry or dismiss them.
+  bool failed;
+  String? failReason;
+
+  double get progress {
+    if (done) return 1.0;
+    if (failed) return sent / (size == 0 ? 1 : size);
+    if (queued) return 0.0;
+    return sent / size;
+  }
 
   /// Filename extension without the dot, lowercased. Empty for folders or
   /// extensionless names. Used by the Ext column on FilesScreen.

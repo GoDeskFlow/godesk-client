@@ -763,6 +763,46 @@ class RealBridge implements Bridge {
   }
 
   @override
+  Future<void> retryTransfer(int id) async {
+    // Pure-UI no-op for now: mark the failed flag clear so the row
+    // returns to the queue. Re-issuing `session_send_files` requires
+    // remembering the original filePath/dir, which the global event
+    // stream doesn't currently surface back to RealBridge. Tracked as
+    // a follow-up; UI surfaces a "Retry not yet wired" SnackBar via
+    // systemNotices when triggered.
+    final i = _queue.indexWhere((it) => it.id == id);
+    if (i < 0) return;
+    _queue[i].failed = false;
+    _queue[i].queued = true;
+    _queue[i].sent = 0;
+    _transfers.add(List<TransferItem>.unmodifiable(_queue));
+  }
+
+  @override
+  Future<void> dismissFailed(int id) async {
+    _queue.removeWhere((it) => it.id == id && it.failed);
+    _transfers.add(List<TransferItem>.unmodifiable(_queue));
+  }
+
+  @override
+  Future<void> reorderTransfer({required int movingId, int? beforeId}) async {
+    final from = _queue.indexWhere((it) => it.id == movingId);
+    if (from < 0) return;
+    final item = _queue.removeAt(from);
+    if (beforeId == null) {
+      _queue.add(item);
+    } else {
+      final to = _queue.indexWhere((it) => it.id == beforeId);
+      if (to < 0) {
+        _queue.add(item);
+      } else {
+        _queue.insert(to, item);
+      }
+    }
+    _transfers.add(List<TransferItem>.unmodifiable(_queue));
+  }
+
+  @override
   Future<void> clearCompleted() async {
     _queue.removeWhere((i) => i.done);
     _transfers.add(List<TransferItem>.unmodifiable(_queue));

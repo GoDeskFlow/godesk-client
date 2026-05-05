@@ -43,6 +43,9 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _peerInput = TextEditingController();
   final TextEditingController _searchInput = TextEditingController();
+  /// Focus node for the address-book search field — let Ctrl+F jump
+  /// straight there from anywhere on Home.
+  final FocusNode _searchFocus = FocusNode();
   String _password = '';
   Identity? _identity;
   List<Peer> _peers = const <Peer>[];
@@ -117,6 +120,39 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    HardwareKeyboard.instance.addHandler(_homeKeyHandler);
+  }
+
+  /// Ctrl+F → focus the address-book search field. If the user is on the
+  /// LAN tab, switch to Saved first so the search field is visible.
+  bool _homeKeyHandler(KeyEvent event) {
+    if (event is! KeyDownEvent) return false;
+    final ctrlOnly = HardwareKeyboard.instance.isControlPressed &&
+        !HardwareKeyboard.instance.isAltPressed &&
+        !HardwareKeyboard.instance.isMetaPressed;
+    if (!ctrlOnly) return false;
+    if (event.logicalKey != LogicalKeyboardKey.keyF) return false;
+    if (!mounted) return false;
+    setState(() {
+      if (_abTab != 'saved') _abTab = 'saved';
+    });
+    // Defer focus to next frame so the TextField is mounted on the
+    // 'saved' tab when we ask for focus.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _searchFocus.requestFocus();
+        _searchInput.selection = TextSelection(
+          baseOffset: 0,
+          extentOffset: _searchInput.text.length,
+        );
+      }
+    });
+    return true;
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _bridge.identity().then((id) {
@@ -137,8 +173,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_homeKeyHandler);
     _peerInput.dispose();
     _searchInput.dispose();
+    _searchFocus.dispose();
     _diagSub?.cancel();
     _lanSub?.cancel();
     super.dispose();
@@ -425,6 +463,50 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _recentIds = raw.split('\n').where((s) => s.isNotEmpty).toList();
     });
+  }
+
+  /// Build one row of the recent-IDs popup. When the ID matches a saved
+  /// peer we surface its OS glyph and display-name; for ad-hoc IDs that
+  /// aren't in the address book we just show the formatted ID in mono.
+  Widget _recentRow(GoDeskTheme t, String id) {
+    final match = _peers.firstWhere(
+      (p) => p.id.replaceAll(' ', '') == id.replaceAll(' ', ''),
+      orElse: () => Peer(
+        id: id,
+        name: '',
+        os: PeerOS.windows,
+        tag: '',
+        lastSeen: '',
+        status: PeerStatus.offline,
+      ),
+    );
+    final hasName = match.name.isNotEmpty;
+    return SizedBox(
+      width: 220,
+      child: Row(
+        children: <Widget>[
+          if (hasName) ...<Widget>[
+            OsGlyph(os: match.os, size: 12, color: t.body),
+            const SizedBox(width: 8),
+          ],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                if (hasName)
+                  Text(match.displayName,
+                      style: GDtype.ui(size: 11, weight: FontWeight.w600, color: t.heading),
+                      overflow: TextOverflow.ellipsis),
+                Text(id,
+                    style: GDtype.mono(size: hasName ? 10 : 12, color: hasName ? t.subtle : t.body),
+                    overflow: TextOverflow.ellipsis),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _pushRecentId(String id) async {
@@ -731,7 +813,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         for (final id in _recentIds)
                           PopupMenuItem<String>(
                             value: id,
-                            child: Text(id, style: GDtype.mono(size: 12)),
+                            child: _recentRow(t, id),
                           ),
                       ],
                       child: Container(
@@ -1020,6 +1102,7 @@ class _HomeScreenState extends State<HomeScreen> {
             Expanded(
               child: TextField(
                 controller: _searchInput,
+                focusNode: _searchFocus,
                 onChanged: (_) => setState(() {}),
                 cursorColor: t.lcdInk,
                 decoration: InputDecoration(
@@ -1112,11 +1195,17 @@ class _HomeScreenState extends State<HomeScreen> {
       itemBuilder: (context, i) => _PeerRow(
         peer: _lanPeers[i],
         isLast: i == _lanPeers.length - 1,
-        onTap: () => widget.onConnect(_lanPeers[i]),
+        onTap: () => _connectPeer(_lanPeers[i]),
         // LAN peer rename: persist to address book first (so the alias
         // survives the next discovery sweep), then open the same alias
         // dialog used for saved peers.
         onEditAlias: () => _editLanPeerAlias(_lanPeers[i]),
+        onConnectWithMode: (mode) {
+          _bridge.setPeerOption(_lanPeers[i].id, 'mode', mode.wireValue);
+          _pushRecentId(_lanPeers[i].id);
+          widget.onConnect(_lanPeers[i], mode: mode.wireValue);
+        },
+        // Fav/remove only meaningful for the saved address book.
       ),
     );
   }
@@ -1153,10 +1242,78 @@ class _HomeScreenState extends State<HomeScreen> {
       itemBuilder: (context, i) => _PeerRow(
         peer: visible[i],
         isLast: i == visible.length - 1,
-        onTap: () => widget.onConnect(visible[i]),
+        onTap: () => _connectPeer(visible[i]),
         onEditAlias: () => _editAlias(visible[i]),
+        onConnectWithMode: (mode) {
+          // User picked a specific mode → persist it as the new default
+          // for this peer so the next plain click remembers.
+          _bridge.setPeerOption(visible[i].id, 'mode', mode.wireValue);
+          _pushRecentId(visible[i].id);
+          widget.onConnect(visible[i], mode: mode.wireValue);
+        },
+        onToggleFav: () => _toggleFav(visible[i]),
+        onRemove: () => _confirmRemove(visible[i]),
       ),
     );
+  }
+
+  /// Connect to [p] using its last-saved mode (from `setPeerOption('mode', ...)`)
+  /// when present; otherwise fall back to the currently-selected `_mode` chip.
+  /// Also pushes the peer to recent IDs.
+  Future<void> _connectPeer(Peer p) async {
+    String? wire = await _bridge.getPeerOption(p.id, 'mode');
+    if (wire == null || wire.isEmpty) wire = _mode.wireValue;
+    _pushRecentId(p.id);
+    widget.onConnect(p, mode: wire);
+  }
+
+  Future<void> _toggleFav(Peer p) async {
+    await _bridge.upsertPeer(Peer(
+      id: p.id,
+      name: p.name,
+      os: p.os,
+      tag: p.tag,
+      lastSeen: p.lastSeen,
+      status: p.status,
+      fav: !p.fav,
+      alias: p.alias,
+    ));
+  }
+
+  Future<void> _confirmRemove(Peer p) async {
+    final t = Theme.of(context).extension<GoDeskTheme>()!;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: t.panel,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: BorderSide(color: t.border),
+        ),
+        title: Text('Remove peer?',
+            style: GDtype.ui(size: 14, weight: FontWeight.w700, color: t.heading)),
+        content: Text(
+          'Remove ${p.displayName} (${p.id}) from the address book? '
+          'Connection history is kept; you can re-add by typing the ID.',
+          style: GDtype.ui(size: 12, color: t.body),
+        ),
+        actions: <Widget>[
+          TactileButton(
+            small: true,
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('CANCEL'),
+          ),
+          TactileButton(
+            small: true,
+            variant: TactileVariant.danger,
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('REMOVE'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await _bridge.forgetPeer(p.id);
   }
 }
 
@@ -1166,11 +1323,23 @@ class _PeerRow extends StatefulWidget {
     required this.isLast,
     required this.onTap,
     required this.onEditAlias,
+    this.onConnectWithMode,
+    this.onToggleFav,
+    this.onRemove,
   });
   final Peer peer;
   final bool isLast;
   final VoidCallback onTap;
   final VoidCallback onEditAlias;
+  /// Right-click context menu: connect using a specific mode (when null,
+  /// the menu hides the per-mode submenu).
+  final ValueChanged<ConnectMode>? onConnectWithMode;
+  /// Right-click context menu: flip the favorite flag (when null, the
+  /// option is hidden — used for LAN peers that aren't persisted yet).
+  final VoidCallback? onToggleFav;
+  /// Right-click context menu: forget the peer (when null, the option
+  /// is hidden — used for LAN peers).
+  final VoidCallback? onRemove;
 
   @override
   State<_PeerRow> createState() => _PeerRowState();
@@ -1178,6 +1347,74 @@ class _PeerRow extends StatefulWidget {
 
 class _PeerRowState extends State<_PeerRow> {
   bool _hovered = false;
+
+  Future<void> _showContextMenu(BuildContext context, Offset globalPos) async {
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
+    if (overlay == null) return;
+    final selected = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(globalPos.dx, globalPos.dy, 1, 1),
+        Offset.zero & overlay.size,
+      ),
+      items: <PopupMenuEntry<String>>[
+        PopupMenuItem<String>(value: 'connect', child: Row(children: <Widget>[
+          const Icon(Icons.power_settings_new, size: 14),
+          const SizedBox(width: 8),
+          Text('Connect — ${widget.peer.displayName}'),
+        ])),
+        if (widget.onConnectWithMode != null) ...<PopupMenuEntry<String>>[
+          const PopupMenuDivider(),
+          for (final m in const <ConnectMode>[
+            ConnectMode.fullControl,
+            ConnectMode.viewOnly,
+            ConnectMode.fileTransfer,
+            ConnectMode.terminal,
+          ])
+            PopupMenuItem<String>(
+                value: 'mode:${m.wireValue}',
+                child: Text('  Connect as: ${m.label}')),
+        ],
+        const PopupMenuDivider(),
+        const PopupMenuItem<String>(value: 'rename', child: Row(children: <Widget>[
+          Icon(Icons.edit, size: 14),
+          SizedBox(width: 8),
+          Text('Rename…'),
+        ])),
+        if (widget.onToggleFav != null)
+          PopupMenuItem<String>(value: 'fav', child: Row(children: <Widget>[
+            Icon(widget.peer.fav ? Icons.star : Icons.star_border, size: 14),
+            const SizedBox(width: 8),
+            Text(widget.peer.fav ? 'Unfavorite' : 'Mark favorite'),
+          ])),
+        if (widget.onRemove != null) ...<PopupMenuEntry<String>>[
+          const PopupMenuDivider(),
+          const PopupMenuItem<String>(value: 'remove', child: Row(children: <Widget>[
+            Icon(Icons.delete_outline, size: 14, color: Color(0xFFE03030)),
+            SizedBox(width: 8),
+            Text('Remove from address book'),
+          ])),
+        ],
+      ],
+    );
+    if (selected == null || !mounted) return;
+    if (selected == 'connect') {
+      widget.onTap();
+    } else if (selected.startsWith('mode:')) {
+      final wire = selected.substring(5);
+      final mode = ConnectMode.values.firstWhere(
+        (m) => m.wireValue == wire,
+        orElse: () => ConnectMode.fullControl,
+      );
+      widget.onConnectWithMode?.call(mode);
+    } else if (selected == 'rename') {
+      widget.onEditAlias();
+    } else if (selected == 'fav') {
+      widget.onToggleFav?.call();
+    } else if (selected == 'remove') {
+      widget.onRemove?.call();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1192,6 +1429,7 @@ class _PeerRowState extends State<_PeerRow> {
           GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: widget.onTap,
+            onSecondaryTapDown: (d) => _showContextMenu(context, d.globalPosition),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
               color: _hovered

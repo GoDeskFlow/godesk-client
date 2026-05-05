@@ -374,7 +374,57 @@ class MockBridge implements Bridge {
 
   @override
   Future<void> cancelTransfer(int id) async {
-    _queue.removeWhere((i) => i.id == id && !i.done);
+    // Active or queued: mark as failed (so the user sees the cancel) and
+    // surface a Retry button. Already-failed: remove. Done: leave alone.
+    final i = _queue.indexWhere((it) => it.id == id);
+    if (i < 0) return;
+    final it = _queue[i];
+    if (it.done) return;
+    if (it.failed) {
+      _queue.removeAt(i);
+    } else {
+      it.failed = true;
+      it.queued = false;
+      it.speed = 0;
+      it.failReason = 'Cancelled';
+    }
+    _transfers.add(List<TransferItem>.unmodifiable(_queue));
+  }
+
+  @override
+  Future<void> retryTransfer(int id) async {
+    final it = _queue.firstWhere((i) => i.id == id, orElse: () => _queue.first);
+    if (!_queue.contains(it)) return;
+    it.failed = false;
+    it.failReason = null;
+    it.sent = 0;
+    it.queued = true;
+    it.speed = 1024 * 1024;
+    it.eta = 1;
+    _transfers.add(List<TransferItem>.unmodifiable(_queue));
+  }
+
+  @override
+  Future<void> dismissFailed(int id) async {
+    _queue.removeWhere((i) => i.id == id && i.failed);
+    _transfers.add(List<TransferItem>.unmodifiable(_queue));
+  }
+
+  @override
+  Future<void> reorderTransfer({required int movingId, int? beforeId}) async {
+    final from = _queue.indexWhere((it) => it.id == movingId);
+    if (from < 0) return;
+    final item = _queue.removeAt(from);
+    if (beforeId == null) {
+      _queue.add(item);
+    } else {
+      final to = _queue.indexWhere((it) => it.id == beforeId);
+      if (to < 0) {
+        _queue.add(item);
+      } else {
+        _queue.insert(to, item);
+      }
+    }
     _transfers.add(List<TransferItem>.unmodifiable(_queue));
   }
 

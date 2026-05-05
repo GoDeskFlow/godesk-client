@@ -97,9 +97,13 @@ class _FilesScreenState extends State<FilesScreen> {
   /// Folder-first sort within each segment (active → queued → done), then by id
   /// for stable order. RuDesktop 2.8.1532 parity.
   List<TransferItem> _sortQueue(List<TransferItem> q) {
+    // Active (0) → failed (1) → queued (2) → done (3). Failed bubbles
+    // up because it needs the user's attention, but stays below in-flight
+    // transfers so it doesn't push them out of view.
     int segment(TransferItem i) {
-      if (i.done) return 2;
-      if (i.queued) return 1;
+      if (i.done) return 3;
+      if (i.queued) return 2;
+      if (i.failed) return 1;
       return 0;
     }
     final out = List<TransferItem>.from(q);
@@ -140,7 +144,13 @@ class _FilesScreenState extends State<FilesScreen> {
                         orElse: () => null,
                       );
                   if (item == null || item.done) return null;
-                  _bridge.cancelTransfer(id);
+                  // Already-failed → dismiss; otherwise cancel (which marks
+                  // the row as failed so user can still retry).
+                  if (item.failed) {
+                    _bridge.dismissFailed(id);
+                  } else {
+                    _bridge.cancelTransfer(id);
+                  }
                   setState(() => _selectedId = null);
                   return null;
                 },
@@ -411,19 +421,59 @@ class _FilesScreenState extends State<FilesScreen> {
                   Expanded(
                     child: queue.isEmpty
                         ? _TransferQueueEmpty(theme: t)
-                        : ListView.builder(
+                        : ReorderableListView.builder(
                             padding: EdgeInsets.zero,
+                            buildDefaultDragHandles: false,
+                            // Re-mapping: the visible list is sorted by
+                            // segment (active/failed/queued/done). When the
+                            // user drags row A to slot B in the SORTED view,
+                            // we translate both endpoints through the
+                            // unsorted snap.data and ask the bridge to move
+                            // there, so the next stream tick refreshes the
+                            // sort cleanly.
+                            onReorder: (oldVis, newVis) {
+                              if (oldVis < 0 || oldVis >= queue.length) return;
+                              if (newVis < 0 || newVis > queue.length) return;
+                              // ReorderableListView calls onReorder with
+                              // newVis "right after the move", so a same-
+                              // segment forward drag arrives as oldVis+1.
+                              // Using IDs sidesteps the index dance.
+                              final movingId = queue[oldVis].id;
+                              int? beforeId;
+                              final adjusted = newVis > oldVis ? newVis : newVis;
+                              if (adjusted < queue.length) {
+                                beforeId = queue[adjusted].id;
+                                if (beforeId == movingId) {
+                                  beforeId = null; // dropped onto self → end
+                                }
+                              }
+                              _bridge.reorderTransfer(
+                                movingId: movingId,
+                                beforeId: beforeId,
+                              );
+                            },
                             itemCount: queue.length,
-                            itemBuilder: (context, i) => _TransferRow(
-                              item: queue[i],
-                              isLast: i == queue.length - 1,
-                              selected: _selectedId == queue[i].id,
-                              onTap: () {
-                                setState(() => _selectedId = queue[i].id);
-                                _focus.requestFocus();
-                              },
-                              onCancel: () => _bridge.cancelTransfer(queue[i].id),
-                            ),
+                            itemBuilder: (context, i) {
+                              final item = queue[i];
+                              final canDrag = !item.done;
+                              return ReorderableDragStartListener(
+                                key: ValueKey<int>(item.id),
+                                index: i,
+                                enabled: canDrag,
+                                child: _TransferRow(
+                                  item: item,
+                                  isLast: i == queue.length - 1,
+                                  selected: _selectedId == item.id,
+                                  onTap: () {
+                                    setState(() => _selectedId = item.id);
+                                    _focus.requestFocus();
+                                  },
+                                  onCancel: () => _bridge.cancelTransfer(item.id),
+                                  onRetry: () => _bridge.retryTransfer(item.id),
+                                  onDismiss: () => _bridge.dismissFailed(item.id),
+                                ),
+                              );
+                            },
                           ),
                   ),
                 ],
@@ -512,12 +562,16 @@ class _TransferRow extends StatelessWidget {
     this.selected = false,
     this.onTap,
     this.onCancel,
+    this.onRetry,
+    this.onDismiss,
   });
   final TransferItem item;
   final bool isLast;
   final bool selected;
   final VoidCallback? onTap;
   final VoidCallback? onCancel;
+  final VoidCallback? onRetry;
+  final VoidCallback? onDismiss;
 
   @override
   Widget build(BuildContext context) {
@@ -555,42 +609,52 @@ class _TransferRow extends StatelessWidget {
                 width: 28,
                 height: 28,
                 decoration: BoxDecoration(
-                  gradient: item.done
+                  gradient: item.failed
                       ? const LinearGradient(
                           begin: Alignment.topCenter,
                           end: Alignment.bottomCenter,
-                          colors: <Color>[Color(0xFF34D058), Color(0xFF22A843)],
+                          colors: <Color>[Color(0xFFE25555), Color(0xFFB03030)],
                         )
-                      : item.queued
-                          ? LinearGradient(
+                      : item.done
+                          ? const LinearGradient(
                               begin: Alignment.topCenter,
                               end: Alignment.bottomCenter,
-                              colors: <Color>[t.panelHi, t.panel],
+                              colors: <Color>[Color(0xFF34D058), Color(0xFF22A843)],
                             )
-                          : LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: <Color>[t.accent, t.accentDark],
-                            ),
+                          : item.queued
+                              ? LinearGradient(
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                  colors: <Color>[t.panelHi, t.panel],
+                                )
+                              : LinearGradient(
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                  colors: <Color>[t.accent, t.accentDark],
+                                ),
                   borderRadius: BorderRadius.circular(5),
                   border: Border.all(
-                    color: item.done
-                        ? const Color(0xFF22A843)
-                        : item.queued
-                            ? t.border
-                            : t.accentDark,
+                    color: item.failed
+                        ? const Color(0xFFB03030)
+                        : item.done
+                            ? const Color(0xFF22A843)
+                            : item.queued
+                                ? t.border
+                                : t.accentDark,
                   ),
                 ),
                 child: Icon(
-                  item.done
-                      ? Icons.check
-                      : item.isFolder
-                          ? Icons.folder_outlined
-                          : isReceive
-                              ? Icons.arrow_downward
-                              : Icons.arrow_upward,
+                  item.failed
+                      ? Icons.error_outline
+                      : item.done
+                          ? Icons.check
+                          : item.isFolder
+                              ? Icons.folder_outlined
+                              : isReceive
+                                  ? Icons.arrow_downward
+                                  : Icons.arrow_upward,
                   size: 14,
-                  color: item.queued ? t.subtle : Colors.white,
+                  color: item.queued && !item.failed ? t.subtle : Colors.white,
                 ),
               ),
               const SizedBox(width: 12),
@@ -621,7 +685,22 @@ class _TransferRow extends StatelessWidget {
                   ],
                 ),
               ),
-              if (!item.done) ...<Widget>[
+              if (item.failed) ...<Widget>[
+                const SizedBox(width: 12),
+                _ActionChip(
+                  icon: Icons.replay,
+                  label: 'RETRY',
+                  color: t.accent,
+                  onTap: onRetry,
+                ),
+                const SizedBox(width: 6),
+                _ActionChip(
+                  icon: Icons.close,
+                  label: 'DISMISS',
+                  color: t.subtle,
+                  onTap: onDismiss,
+                ),
+              ] else if (!item.done) ...<Widget>[
                 const SizedBox(width: 12),
                 _CancelChip(onTap: onCancel),
               ],
@@ -630,6 +709,11 @@ class _TransferRow extends StatelessWidget {
   }
 
   Widget _statusLine(GoDeskTheme t, TransferItem item) {
+    if (item.failed) {
+      final reason = item.failReason?.toUpperCase() ?? 'FAILED';
+      return Text('✗ $reason at ${formatBytes(item.sent)} / ${formatBytes(item.size)}',
+          style: GDtype.mono(size: 10, weight: FontWeight.w700, color: const Color(0xFFE03030)));
+    }
     if (item.done) {
       return Text('✓ COMPLETE',
           style: GDtype.mono(size: 10, weight: FontWeight.w700, color: const Color(0xFF22A843)));
@@ -640,6 +724,54 @@ class _TransferRow extends StatelessWidget {
     return Text(
       '${formatBytes(item.sent)} / ${formatBytes(item.size)}  ·  ${formatBytes(item.speed)}/s  ·  ${item.eta}s left',
       style: GDtype.mono(size: 10, color: t.subtle),
+    );
+  }
+}
+
+/// Compact pill button used for retry/dismiss actions on failed transfers.
+class _ActionChip extends StatelessWidget {
+  const _ActionChip({
+    required this.icon,
+    required this.label,
+    required this.color,
+    this.onTap,
+  });
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).extension<GoDeskTheme>()!;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: <Color>[t.panelHi, t.panel],
+            ),
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: t.border),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(icon, size: 11, color: color),
+              const SizedBox(width: 4),
+              Text(label,
+                  style: GDtype.wordmark(
+                      size: 9, color: color, trackingEm: 0.06)),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
