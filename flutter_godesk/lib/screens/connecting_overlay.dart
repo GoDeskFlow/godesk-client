@@ -166,7 +166,8 @@ class _ConnectingOverlayState extends State<ConnectingOverlay>
               child: Column(
                 children: <Widget>[
                   for (var i = 0; i < _stages.length; i++)
-                    Opacity(
+                    AnimatedOpacity(
+                      duration: const Duration(milliseconds: 280),
                       opacity: i > _stage ? 0.35 : 1,
                       child: Padding(
                         padding: const EdgeInsets.symmetric(vertical: 6),
@@ -175,13 +176,15 @@ class _ConnectingOverlayState extends State<ConnectingOverlay>
                             _StageDot(theme: t, state: _dotState(i)),
                             const SizedBox(width: 10),
                             Expanded(
-                              child: Text(
-                                _stages[i],
+                              child: AnimatedDefaultTextStyle(
+                                duration: const Duration(milliseconds: 280),
                                 style: GDtype.ui(
                                   size: 13,
                                   color: i <= _stage ? t.heading : t.subtle,
-                                  weight: i == _stage ? FontWeight.w500 : FontWeight.w400,
+                                  weight:
+                                      i == _stage ? FontWeight.w500 : FontWeight.w400,
                                 ),
+                                child: Text(_stages[i]),
                               ),
                             ),
                           ],
@@ -310,7 +313,9 @@ class _StageDot extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
       width: 16,
       height: 16,
       decoration: BoxDecoration(

@@ -315,8 +315,17 @@ class TrayController with TrayListener, WindowListener {
     await windowManager.destroy();
   }
 
+  /// Broadcast stream firing once each time the tray icon is clicked.
+  /// Lets the UI surface a brief acknowledgement (e.g. a flash on
+  /// chrome) so the user has feedback even when the window was already
+  /// visible and focused.
+  final StreamController<void> _trayPings =
+      StreamController<void>.broadcast();
+  Stream<void> get trayPings => _trayPings.stream;
+
   @override
   void onTrayIconMouseDown() async {
+    _trayPings.add(null);
     if (await windowManager.isVisible()) {
       await windowManager.focus();
     } else {

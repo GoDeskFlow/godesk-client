@@ -2,6 +2,8 @@
 // active session overlay + footer status bar + onboarding mode.
 // Port of GoDeskSkeuoApp from godesk-skeuo-app.jsx.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -22,6 +24,7 @@ import '../screens/settings.dart';
 import '../theme/godesk_theme.dart';
 import '../theme/tweaks.dart';
 import '../theme/typography.dart';
+import '../util/platform_polish.dart' show tray;
 
 class GoDeskShell extends StatefulWidget {
   const GoDeskShell({required this.controller, super.key});
@@ -31,7 +34,8 @@ class GoDeskShell extends StatefulWidget {
   State<GoDeskShell> createState() => _GoDeskShellState();
 }
 
-class _GoDeskShellState extends State<GoDeskShell> {
+class _GoDeskShellState extends State<GoDeskShell>
+    with SingleTickerProviderStateMixin {
   SkeuoTab _tab = _envInitialTab();
   bool _onboarding = _envInitialOnboarding();
   bool _onboardingChecked = false;
@@ -67,23 +71,127 @@ class _GoDeskShellState extends State<GoDeskShell> {
     });
   }
   void _connectComplete() {
+    final p = _connecting;
     setState(() {
-      _session = _connecting;
+      _session = p;
       _connecting = null;
+      _userDisconnected = false;
+      if (p != null) {
+        _reconnectInfo = (peer: p, mode: _pendingMode);
+      }
     });
   }
 
-  void _disconnect() => setState(() => _session = null);
+  void _disconnect() {
+    _userDisconnected = true;
+    _reconnectInfo = null;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    setState(() => _session = null);
+  }
+
+  /// True when [_disconnect] was invoked by the user clicking
+  /// DISCONNECT. Cleared on every successful new connect. The bridge
+  /// stream tells us when a session ends; without this flag we can't
+  /// distinguish "the user asked to disconnect" from "the network died
+  /// and the bridge dropped the session". Auto-reconnect should only
+  /// trigger in the second case.
+  bool _userDisconnected = false;
+
+  /// Snapshot of the last-active peer + mode, used by the auto-reconnect
+  /// flow if the session drops.
+  ({Peer peer, String? mode})? _reconnectInfo;
+
+  /// Countdown timer for the "reconnect in N seconds" prompt that pops
+  /// up after an unexpected drop.
+  Timer? _reconnectTimer;
+  int _reconnectSecondsLeft = 0;
+  static const int _reconnectInitialDelay = 5;
+
+  StreamSubscription<SessionState>? _sessionSub;
+
+  /// Listen for the bridge marking the session as gone (peerId == null
+  /// while we still hold a `_session`). If the user didn't trigger this,
+  /// kick off the reconnect prompt.
+  void _watchSessionEnd() {
+    _sessionSub?.cancel();
+    _sessionSub = BridgeProvider.of(context).sessionState().listen((s) {
+      if (!mounted) return;
+      if (_session != null && s.peerId == null) {
+        if (_userDisconnected) {
+          _userDisconnected = false;
+          return;
+        }
+        _startReconnectPrompt();
+      }
+    });
+  }
+
+  void _startReconnectPrompt() {
+    if (_reconnectInfo == null) {
+      setState(() => _session = null);
+      return;
+    }
+    setState(() {
+      _session = null;
+      _reconnectSecondsLeft = _reconnectInitialDelay;
+    });
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) {
+        _reconnectTimer?.cancel();
+        return;
+      }
+      setState(() => _reconnectSecondsLeft -= 1);
+      if (_reconnectSecondsLeft <= 0) {
+        _reconnectTimer?.cancel();
+        final info = _reconnectInfo;
+        if (info != null) {
+          _connect(info.peer, mode: info.mode);
+        }
+      }
+    });
+  }
+
+  void _cancelReconnect() {
+    _reconnectTimer?.cancel();
+    setState(() {
+      _reconnectInfo = null;
+      _reconnectSecondsLeft = 0;
+    });
+  }
+
+  void _reconnectNow() {
+    _reconnectTimer?.cancel();
+    final info = _reconnectInfo;
+    if (info == null) return;
+    setState(() => _reconnectSecondsLeft = 0);
+    _connect(info.peer, mode: info.mode);
+  }
+
+  /// Brief flash when the user clicks the tray icon — visual ack so the
+  /// click is acknowledged even if the window was already foregrounded.
+  late final AnimationController _trayFlash;
+  StreamSubscription<void>? _traySub;
 
   @override
   void initState() {
     super.initState();
     HardwareKeyboard.instance.addHandler(_keyHandler);
+    _trayFlash = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 450),
+    );
+    _traySub = tray.trayPings.listen((_) {
+      if (!mounted) return;
+      _trayFlash.forward(from: 0);
+    });
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _watchSessionEnd();
     if (!_onboardingChecked) {
       _onboardingChecked = true;
       // Check if we need to show onboarding. The env-flag override always
@@ -105,6 +213,10 @@ class _GoDeskShellState extends State<GoDeskShell> {
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_keyHandler);
+    _trayFlash.dispose();
+    _traySub?.cancel();
+    _sessionSub?.cancel();
+    _reconnectTimer?.cancel();
     super.dispose();
   }
 
@@ -173,9 +285,31 @@ class _GoDeskShellState extends State<GoDeskShell> {
       children: <Widget>[
         Column(
           children: <Widget>[
-            SkeuoChrome(
-              current: _tab,
-              onTab: (v) => setState(() => _tab = v),
+            // Tab badges sourced from the bridge's transfer stream so the
+            // user sees a red dot on Files when something needs attention
+            // (or accent dot when transfers are in flight on another tab).
+            StreamBuilder<List<TransferItem>>(
+              stream: BridgeProvider.of(context).transfers(),
+              initialData: const <TransferItem>[],
+              builder: (context, snap) {
+                final q = snap.data ?? const <TransferItem>[];
+                final hasFailed = q.any((it) => it.failed);
+                final hasActive =
+                    q.any((it) => !it.done && !it.queued && !it.failed) ||
+                        q.any((it) => it.queued);
+                final filesBadge = hasFailed
+                    ? TabBadge.alert
+                    : hasActive
+                        ? TabBadge.info
+                        : TabBadge.none;
+                return SkeuoChrome(
+                  current: _tab,
+                  onTab: (v) => setState(() => _tab = v),
+                  badges: <SkeuoTab, TabBadge>{
+                    SkeuoTab.files: filesBadge,
+                  },
+                );
+              },
             ),
             Expanded(child: _screen()),
             _Footer(onLaunchOnboarding: () => setState(() => _onboarding = true)),
@@ -194,6 +328,19 @@ class _GoDeskShellState extends State<GoDeskShell> {
           Positioned.fill(
             child: SessionScreen(peer: _session!, onDisconnect: _disconnect),
           ),
+        if (_session == null &&
+            _reconnectInfo != null &&
+            _reconnectSecondsLeft > 0)
+          Positioned(
+            top: 16,
+            right: 16,
+            child: _ReconnectPrompt(
+              peer: _reconnectInfo!.peer,
+              secondsLeft: _reconnectSecondsLeft,
+              onCancel: _cancelReconnect,
+              onReconnectNow: _reconnectNow,
+            ),
+          ),
         if (_shortcutsOpen)
           Positioned.fill(
             child: _ShortcutsOverlay(
@@ -201,6 +348,26 @@ class _GoDeskShellState extends State<GoDeskShell> {
               onClose: () => setState(() => _shortcutsOpen = false),
             ),
           ),
+        // Tray-click ack: brief accent-tinted full-bleed flash that
+        // peaks at 22% opacity, ~450ms total. IgnorePointer so it never
+        // blocks input. Dismisses itself once the AnimationController
+        // returns to 0.
+        Positioned.fill(
+          child: IgnorePointer(
+            child: AnimatedBuilder(
+              animation: _trayFlash,
+              builder: (_, __) {
+                if (_trayFlash.value == 0) return const SizedBox.shrink();
+                final v = _trayFlash.value;
+                final eased = v < 0.5 ? v * 2 : (1 - v) * 2;
+                return ColoredBox(
+                  color: t.accent.withValues(alpha: 0.22 * eased),
+                  child: const SizedBox.expand(),
+                );
+              },
+            ),
+          ),
+        ),
       ],
     );
   }
@@ -438,6 +605,82 @@ class _ShortcutsOverlay extends StatelessWidget {
                 style: GDtype.ui(size: 11, color: t.body)),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Top-right toast that appears after an unexpected session drop. Counts
+/// down [secondsLeft] then triggers reconnect; user can hit RECONNECT
+/// NOW to skip the wait or CANCEL to abort. Auto-dismisses when
+/// [secondsLeft] hits 0 (parent rebuilds without this widget).
+class _ReconnectPrompt extends StatelessWidget {
+  const _ReconnectPrompt({
+    required this.peer,
+    required this.secondsLeft,
+    required this.onCancel,
+    required this.onReconnectNow,
+  });
+  final Peer peer;
+  final int secondsLeft;
+  final VoidCallback onCancel;
+  final VoidCallback onReconnectNow;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).extension<GoDeskTheme>()!;
+    return Material(
+      type: MaterialType.transparency,
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 320),
+        padding: const EdgeInsets.fromLTRB(14, 10, 12, 10),
+        decoration: BoxDecoration(
+          color: t.panel,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: t.border),
+          boxShadow: const <BoxShadow>[
+            BoxShadow(
+                color: Color(0x40000000), offset: Offset(0, 4), blurRadius: 14),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Icon(Icons.wifi_tethering_error, size: 14, color: t.accent),
+                const SizedBox(width: 8),
+                Text('Session dropped',
+                    style: GDtype.ui(
+                        size: 12, weight: FontWeight.w700, color: t.heading)),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Reconnecting to ${peer.displayName} in ${secondsLeft}s…',
+              style: GDtype.ui(size: 11, color: t.body),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: <Widget>[
+                TactileButton(
+                  small: true,
+                  onPressed: onCancel,
+                  child: const Text('CANCEL'),
+                ),
+                const SizedBox(width: 6),
+                TactileButton(
+                  small: true,
+                  variant: TactileVariant.primary,
+                  onPressed: onReconnectNow,
+                  child: const Text('RECONNECT NOW'),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -2,7 +2,10 @@
 // Port of godesk-skeuo-home.jsx.
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -52,6 +55,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Diagnostics? _diagnostics;
   StreamSubscription<Diagnostics>? _diagSub;
   bool _showPw = false;
+  /// Auto-hides the OTP after 30s of being shown — privacy guard for
+  /// shoulder-surfing on shared monitors. Re-pressing SHOW resets the
+  /// timer; HIDE cancels it.
+  Timer? _pwHideTimer;
   bool _copiedId = false;
   bool _copiedPw = false;
   ConnectMode _mode = ConnectMode.fullControl;
@@ -196,12 +203,24 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_homeKeyHandler);
     _otpTimer?.cancel();
+    _pwHideTimer?.cancel();
     _peerInput.dispose();
     _searchInput.dispose();
     _searchFocus.dispose();
     _diagSub?.cancel();
     _lanSub?.cancel();
     super.dispose();
+  }
+
+  void _toggleShowPw() {
+    setState(() => _showPw = !_showPw);
+    _pwHideTimer?.cancel();
+    if (_showPw) {
+      _pwHideTimer = Timer(const Duration(seconds: 30), () {
+        if (!mounted) return;
+        setState(() => _showPw = false);
+      });
+    }
   }
 
   void _copyId() {
@@ -624,7 +643,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: <Widget>[
                     Text('> ID:', style: lcdDimLabel(theme: t)),
                     const SizedBox(height: 4),
-                    Text(_identity?.id ?? '— — —', style: lcdReadout(theme: t, size: 26)),
+                    // SelectableText so the OS right-click copy menu works
+                    // on the LCD-style ID readout — alongside the dedicated
+                    // COPY button.
+                    SelectableText(_identity?.id ?? '— — —',
+                        style: lcdReadout(theme: t, size: 26)),
                   ],
                 ),
               ),
@@ -681,7 +704,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const SizedBox(height: 10),
               LCDPanel(
-                child: Text(
+                child: SelectableText(
                   _showPw ? _password : '•••-•••-••',
                   style: lcdReadout(theme: t, size: 18),
                 ),
@@ -719,7 +742,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   Expanded(
                     child: TactileButton(
                       small: true,
-                      onPressed: () => setState(() => _showPw = !_showPw),
+                      onPressed: _toggleShowPw,
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -1086,6 +1109,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                         const SizedBox(width: 6),
+                        _abMoreMenu(t),
+                        const SizedBox(width: 6),
                         _sortMenu(t),
                         const SizedBox(width: 6),
                         _entriesPlate(t),
@@ -1106,6 +1131,213 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
     );
+  }
+
+  /// Address-book overflow menu — Export / Import / future bulk actions.
+  /// Sits between ADD and the sort/entries plates.
+  Widget _abMoreMenu(GoDeskTheme t) {
+    return PopupMenuButton<String>(
+      tooltip: 'Address book actions',
+      offset: const Offset(0, 24),
+      onSelected: (action) {
+        switch (action) {
+          case 'export':
+            _exportCsv();
+          case 'import':
+            _importCsv();
+        }
+      },
+      itemBuilder: (_) => <PopupMenuEntry<String>>[
+        const PopupMenuItem<String>(
+          value: 'export',
+          child: Row(children: <Widget>[
+            Icon(Icons.file_download_outlined, size: 14),
+            SizedBox(width: 8),
+            Text('Export to CSV…'),
+          ]),
+        ),
+        const PopupMenuItem<String>(
+          value: 'import',
+          child: Row(children: <Widget>[
+            Icon(Icons.file_upload_outlined, size: 14),
+            SizedBox(width: 8),
+            Text('Import from CSV…'),
+          ]),
+        ),
+      ],
+      child: Container(
+        height: 22,
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        decoration: BoxDecoration(
+          color: t.bg,
+          borderRadius: BorderRadius.circular(3),
+          border: Border.all(color: t.border),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(Icons.more_horiz, size: 13, color: t.subtle),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static String _csvCell(String v) {
+    if (v.contains(',') || v.contains('"') || v.contains('\n')) {
+      return '"${v.replaceAll('"', '""')}"';
+    }
+    return v;
+  }
+
+  /// Export all peers to a CSV file at the user-picked path. Columns:
+  /// id, name, alias, tag, os, fav, lastSeen.
+  Future<void> _exportCsv() async {
+    if (_peers.isEmpty) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
+        duration: Duration(milliseconds: 2200),
+        content: Text('Address book is empty — nothing to export.'),
+      ));
+      return;
+    }
+    final path = await FilePicker.platform.saveFile(
+      dialogTitle: 'Export address book',
+      fileName: 'godesk-address-book.csv',
+      type: FileType.custom,
+      allowedExtensions: <String>['csv'],
+    );
+    if (path == null || !mounted) return;
+    final lines = <String>[
+      'id,name,alias,tag,os,fav,lastSeen',
+      for (final p in _peers)
+        <String>[
+          _csvCell(p.id),
+          _csvCell(p.name),
+          _csvCell(p.alias ?? ''),
+          _csvCell(p.tag),
+          p.os.name,
+          p.fav ? 'true' : 'false',
+          _csvCell(p.lastSeen),
+        ].join(','),
+    ];
+    try {
+      await File(path).writeAsString(lines.join('\n'), flush: true);
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+        duration: const Duration(milliseconds: 2400),
+        content: Text('Exported ${_peers.length} peers to $path'),
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+        duration: const Duration(milliseconds: 3000),
+        content: Text('Export failed: $e'),
+      ));
+    }
+  }
+
+  /// Parse a single CSV line respecting "quoted, fields" with embedded
+  /// commas + escaped "" double-quotes. Doesn't depend on a CSV package.
+  static List<String> _parseCsvLine(String line) {
+    final out = <String>[];
+    final buf = StringBuffer();
+    var inQ = false;
+    for (var i = 0; i < line.length; i++) {
+      final c = line[i];
+      if (inQ) {
+        if (c == '"') {
+          if (i + 1 < line.length && line[i + 1] == '"') {
+            buf.write('"');
+            i++;
+          } else {
+            inQ = false;
+          }
+        } else {
+          buf.write(c);
+        }
+      } else {
+        if (c == ',') {
+          out.add(buf.toString());
+          buf.clear();
+        } else if (c == '"' && buf.isEmpty) {
+          inQ = true;
+        } else {
+          buf.write(c);
+        }
+      }
+    }
+    out.add(buf.toString());
+    return out;
+  }
+
+  Future<void> _importCsv() async {
+    final res = await FilePicker.platform.pickFiles(
+      dialogTitle: 'Import address book',
+      type: FileType.custom,
+      allowedExtensions: <String>['csv'],
+    );
+    if (res == null || res.files.isEmpty) return;
+    final path = res.files.first.path;
+    if (path == null || !mounted) return;
+    String raw;
+    try {
+      raw = await File(path).readAsString();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+        duration: const Duration(milliseconds: 3000),
+        content: Text('Import failed: $e'),
+      ));
+      return;
+    }
+    final lines = const LineSplitter().convert(raw);
+    if (lines.isEmpty) return;
+    // Tolerate header row OR raw data — detect by checking for the
+    // literal token "id" at the start.
+    final start = lines.first.toLowerCase().startsWith('id,') ? 1 : 0;
+    var added = 0;
+    var skipped = 0;
+    for (var i = start; i < lines.length; i++) {
+      final cols = _parseCsvLine(lines[i]);
+      if (cols.isEmpty || cols.first.trim().isEmpty) continue;
+      if (cols.length < 2) {
+        skipped++;
+        continue;
+      }
+      final id = cols[0].trim();
+      if (_peers.any((p) => p.id == id)) {
+        skipped++;
+        continue;
+      }
+      final name = cols.length > 1 ? cols[1].trim() : '';
+      final alias = cols.length > 2 ? cols[2].trim() : '';
+      final tag = cols.length > 3 ? cols[3].trim() : 'Imported';
+      final osStr = cols.length > 4 ? cols[4].trim() : 'windows';
+      final favStr = cols.length > 5 ? cols[5].trim() : 'false';
+      final lastSeen = cols.length > 6 ? cols[6].trim() : 'imported';
+      final os = PeerOS.values.firstWhere(
+        (o) => o.name == osStr,
+        orElse: () => PeerOS.windows,
+      );
+      await _bridge.upsertPeer(Peer(
+        id: id,
+        name: name.isEmpty ? 'Peer $id' : name,
+        os: os,
+        tag: tag.isEmpty ? 'Imported' : tag,
+        lastSeen: lastSeen.isEmpty ? 'imported' : lastSeen,
+        status: PeerStatus.offline,
+        fav: favStr == 'true',
+        alias: alias.isEmpty ? null : alias,
+      ));
+      added++;
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+      duration: const Duration(milliseconds: 2800),
+      content: Text(
+          'Imported $added new ${added == 1 ? 'peer' : 'peers'}'
+          '${skipped > 0 ? ' · $skipped skipped (duplicate or malformed)' : ''}'),
+    ));
   }
 
   Widget _sortMenu(GoDeskTheme t) {

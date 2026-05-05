@@ -300,6 +300,9 @@ class _SessionScreenState extends State<SessionScreen> {
             ),
           if (recording)
             const Positioned(top: 56, left: 16, child: _RecordingBadge()),
+          // _RecordingBadge mounts/unmounts with `recording`, so its
+          // own initState is the natural reset point for the duration
+          // counter — no extra plumbing required here.
           if (voice)
             const Positioned(top: 56, right: 16, child: _VoiceBadge()),
           // Floating toolbar
@@ -807,11 +810,48 @@ class _PrivacyBanner extends StatelessWidget {
   }
 }
 
-class _RecordingBadge extends StatelessWidget {
+class _RecordingBadge extends StatefulWidget {
   const _RecordingBadge();
+  @override
+  State<_RecordingBadge> createState() => _RecordingBadgeState();
+}
+
+class _RecordingBadgeState extends State<_RecordingBadge>
+    with SingleTickerProviderStateMixin {
+  late final DateTime _start;
+  Timer? _ticker;
+  late final AnimationController _pulse;
+
+  @override
+  void initState() {
+    super.initState();
+    _start = DateTime.now();
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  String _format(Duration d) {
+    final h = d.inHours;
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return h > 0 ? '$h:$m:$s' : '$m:$s';
+  }
 
   @override
   Widget build(BuildContext context) {
+    final dur = DateTime.now().difference(_start);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
@@ -819,20 +859,72 @@ class _RecordingBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
         border: Border.all(color: const Color(0xFFE03030)),
       ),
-      child: const Row(
+      child: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          Icon(Icons.fiber_manual_record, size: 10, color: Color(0xFFE03030)),
-          SizedBox(width: 5),
-          Text('REC', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 1.4)),
+          AnimatedBuilder(
+            animation: _pulse,
+            builder: (_, __) => Opacity(
+              opacity: 0.4 + 0.6 * _pulse.value,
+              child: const Icon(Icons.fiber_manual_record,
+                  size: 10, color: Color(0xFFE03030)),
+            ),
+          ),
+          const SizedBox(width: 5),
+          const Text('REC',
+              style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.4)),
+          const SizedBox(width: 6),
+          Text(_format(dur),
+              style: const TextStyle(
+                color: Color(0xFFFFB0B0),
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                fontFeatures: <FontFeature>[FontFeature.tabularFigures()],
+              )),
         ],
       ),
     );
   }
 }
 
-class _VoiceBadge extends StatelessWidget {
+class _VoiceBadge extends StatefulWidget {
   const _VoiceBadge();
+  @override
+  State<_VoiceBadge> createState() => _VoiceBadgeState();
+}
+
+class _VoiceBadgeState extends State<_VoiceBadge>
+    with TickerProviderStateMixin {
+  /// Two animation controllers driving twin LEDs — local mic + remote
+  /// mic. We don't have real audio levels yet; until the bridge surfaces
+  /// them, both LEDs pulse on slightly out-of-phase periodic rhythms so
+  /// the badge looks alive instead of static.
+  late final AnimationController _self;
+  late final AnimationController _peer;
+
+  @override
+  void initState() {
+    super.initState();
+    _self = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 420),
+    )..repeat(reverse: true);
+    _peer = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 580),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _self.dispose();
+    _peer.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -843,14 +935,58 @@ class _VoiceBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
         border: Border.all(color: const Color(0xFF22A843)),
       ),
-      child: const Row(
+      child: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          Icon(Icons.mic, size: 10, color: Color(0xFF22A843)),
-          SizedBox(width: 5),
-          Text('VOICE', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 1.4)),
+          AnimatedBuilder(
+            animation: _self,
+            builder: (_, __) => _MicLED(level: _self.value, label: 'YOU'),
+          ),
+          const SizedBox(width: 8),
+          Container(width: 1, height: 10, color: const Color(0x22FFFFFF)),
+          const SizedBox(width: 8),
+          AnimatedBuilder(
+            animation: _peer,
+            builder: (_, __) => _MicLED(level: _peer.value, label: 'PEER'),
+          ),
         ],
       ),
+    );
+  }
+}
+
+class _MicLED extends StatelessWidget {
+  const _MicLED({required this.level, required this.label});
+  final double level; // 0..1
+  final String label;
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Container(
+          width: 7,
+          height: 7,
+          decoration: BoxDecoration(
+            color: const Color(0xFF22A843),
+            shape: BoxShape.circle,
+            boxShadow: <BoxShadow>[
+              BoxShadow(
+                color: const Color(0xFF22A843).withValues(alpha: 0.3 + 0.5 * level),
+                blurRadius: 4 + 4 * level,
+                spreadRadius: 0.5 + level,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 5),
+        Text(label,
+            style: const TextStyle(
+                color: Colors.white,
+                fontSize: 9,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.2)),
+      ],
     );
   }
 }

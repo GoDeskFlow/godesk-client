@@ -43,7 +43,7 @@ Future<void> main() async {
   runApp(GoDeskApp(controller: controller, bridge: bridge));
 }
 
-class GoDeskApp extends StatelessWidget {
+class GoDeskApp extends StatefulWidget {
   const GoDeskApp({
     required this.controller,
     required this.bridge,
@@ -54,11 +54,53 @@ class GoDeskApp extends StatelessWidget {
   final Bridge bridge;
 
   @override
+  State<GoDeskApp> createState() => _GoDeskAppState();
+}
+
+class _GoDeskAppState extends State<GoDeskApp>
+    with SingleTickerProviderStateMixin {
+  /// Last-seen tweaks fingerprint. When this changes (user flipped dark
+  /// mode, picked a new accent, etc.), we run a brief cross-fade overlay
+  /// so the UI doesn't snap from one palette to the other in a single
+  /// frame. Skeuo widgets don't support tween-by-color natively because
+  /// the theme is a `ThemeExtension`, so masking the swap is the cheap
+  /// workable approach.
+  late final AnimationController _swap;
+  String? _lastFp;
+
+  @override
+  void initState() {
+    super.initState();
+    _swap = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 320),
+    );
+    widget.controller.addListener(_onTweaks);
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onTweaks);
+    _swap.dispose();
+    super.dispose();
+  }
+
+  void _onTweaks() {
+    final tw = widget.controller.value;
+    final fp = '${tw.darkMode}|${tw.accent}|${tw.lcd}|${tw.intensity}';
+    if (_lastFp != null && _lastFp != fp) {
+      _swap.forward(from: 0).then((_) => _swap.value = 0);
+    }
+    _lastFp = fp;
+  }
+
+  @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: controller,
+      animation: widget.controller,
       builder: (context, _) {
-        final tw = controller.value;
+        final tw = widget.controller.value;
+        _lastFp ??= '${tw.darkMode}|${tw.accent}|${tw.lcd}|${tw.intensity}';
         final godeskTheme = makeSkeuoTheme(
           dark: tw.darkMode,
           accentName: tw.accent,
@@ -66,7 +108,7 @@ class GoDeskApp extends StatelessWidget {
           intensity: tw.intensity,
         );
         return BridgeProvider(
-          bridge: bridge,
+          bridge: widget.bridge,
           child: MaterialApp(
             title: 'GoDesk',
             debugShowCheckedModeBanner: false,
@@ -75,7 +117,28 @@ class GoDeskApp extends StatelessWidget {
               scaffoldBackgroundColor: godeskTheme.bg,
               extensions: <ThemeExtension<dynamic>>[godeskTheme],
             ),
-            home: GoDeskShell(controller: controller),
+            home: Stack(
+              children: <Widget>[
+                Positioned.fill(child: GoDeskShell(controller: widget.controller)),
+                // Theme-swap fade — opaque at the midpoint so the frame
+                // where the palette flips is fully masked, then fades
+                // back out.
+                IgnorePointer(
+                  child: AnimatedBuilder(
+                    animation: _swap,
+                    builder: (_, __) {
+                      // Triangle wave: 0 → 1 at t=0.5 → 0 at t=1.0
+                      final v = _swap.value;
+                      final alpha = v < 0.5 ? v * 2 : (1 - v) * 2;
+                      return ColoredBox(
+                        color: godeskTheme.bg.withValues(alpha: alpha),
+                        child: const SizedBox.expand(),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
           ),
         );
       },

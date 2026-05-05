@@ -18,17 +18,28 @@ import 'skeuo_logo.dart';
 
 enum SkeuoTab { home, files, settings }
 
+/// What kind of badge to surface on a SkeuoChrome tab. `none` = no
+/// indicator; `info` = neutral accent dot for "something happened on
+/// this tab while you were elsewhere"; `alert` = red dot for failed
+/// state. Tab-button background paints accordingly.
+enum TabBadge { none, info, alert }
+
 class SkeuoChrome extends StatelessWidget {
   const SkeuoChrome({
     required this.current,
     required this.onTab,
     this.serial = 'SN-742·8193',
+    this.badges = const <SkeuoTab, TabBadge>{},
     super.key,
   });
 
   final SkeuoTab current;
   final ValueChanged<SkeuoTab> onTab;
   final String serial;
+  /// Per-tab status indicators (e.g. "failed transfer on Files tab").
+  /// Empty map → no indicators. The badge for the currently-active tab
+  /// is auto-suppressed since the user is already looking at it.
+  final Map<SkeuoTab, TabBadge> badges;
 
   @override
   Widget build(BuildContext context) {
@@ -114,7 +125,7 @@ class SkeuoChrome extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(width: 14),
-                        _ScreenTabs(current: current, onTab: onTab),
+                        _ScreenTabs(current: current, onTab: onTab, badges: badges),
                       ],
                     ),
                   ),
@@ -130,9 +141,14 @@ class SkeuoChrome extends StatelessWidget {
 }
 
 class _ScreenTabs extends StatelessWidget {
-  const _ScreenTabs({required this.current, required this.onTab});
+  const _ScreenTabs({
+    required this.current,
+    required this.onTab,
+    this.badges = const <SkeuoTab, TabBadge>{},
+  });
   final SkeuoTab current;
   final ValueChanged<SkeuoTab> onTab;
+  final Map<SkeuoTab, TabBadge> badges;
 
   @override
   Widget build(BuildContext context) {
@@ -175,6 +191,12 @@ class _ScreenTabs extends StatelessWidget {
                     label: tabs[i].$2,
                     active: tabs[i].$1 == current,
                     onTap: () => onTab(tabs[i].$1),
+                    // Suppress the badge on the active tab — the user
+                    // is already looking at it, so the indicator is
+                    // redundant noise.
+                    badge: tabs[i].$1 == current
+                        ? TabBadge.none
+                        : (badges[tabs[i].$1] ?? TabBadge.none),
                   ),
                   if (i < tabs.length - 1)
                     // Darker than t.border so the segment seam is visible.
@@ -199,10 +221,12 @@ class _TabButton extends StatelessWidget {
     required this.label,
     required this.active,
     required this.onTap,
+    this.badge = TabBadge.none,
   });
   final String label;
   final bool active;
   final VoidCallback onTap;
+  final TabBadge badge;
 
   @override
   Widget build(BuildContext context) {
@@ -249,24 +273,33 @@ class _TabButton extends StatelessWidget {
                   ]
                 : const <BoxShadow>[],
           ),
-          child: Text(
-            label.toUpperCase(),
-            style: GDtype.wordmark(
-              size: 10,
-              color: active ? Colors.white : t.body,
-              trackingEm: 0.1,
-            ).copyWith(
-              shadows: <Shadow>[
-                Shadow(
-                  color: active
-                      ? const Color(0x66000000)
-                      : t.dark
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Text(
+                label.toUpperCase(),
+                style: GDtype.wordmark(
+                  size: 10,
+                  color: active ? Colors.white : t.body,
+                  trackingEm: 0.1,
+                ).copyWith(
+                  shadows: <Shadow>[
+                    Shadow(
+                      color: active
                           ? const Color(0x66000000)
-                          : const Color(0x99FFFFFF),
-                  offset: const Offset(0, 1),
+                          : t.dark
+                              ? const Color(0x66000000)
+                              : const Color(0x99FFFFFF),
+                      offset: const Offset(0, 1),
+                    ),
+                  ],
                 ),
+              ),
+              if (badge != TabBadge.none) ...<Widget>[
+                const SizedBox(width: 6),
+                _BadgeDot(kind: badge),
               ],
-            ),
+            ],
           ),
         ),
       ),
@@ -385,6 +418,62 @@ class _TrafficDot extends StatelessWidget {
               border: Border.all(color: Colors.black.withValues(alpha: 0.15), width: 0.5),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Tiny circular indicator beside a tab label. Pulses subtly so the
+/// user notices a status change without it being distracting.
+class _BadgeDot extends StatefulWidget {
+  const _BadgeDot({required this.kind});
+  final TabBadge kind;
+
+  @override
+  State<_BadgeDot> createState() => _BadgeDotState();
+}
+
+class _BadgeDotState extends State<_BadgeDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).extension<GoDeskTheme>()!;
+    final color = widget.kind == TabBadge.alert
+        ? const Color(0xFFE03030)
+        : t.accent;
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (_, __) => Container(
+        width: 7,
+        height: 7,
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          boxShadow: <BoxShadow>[
+            BoxShadow(
+              color: color.withValues(alpha: 0.25 + 0.45 * _ctrl.value),
+              blurRadius: 5,
+              spreadRadius: 1.0 + 1.5 * _ctrl.value,
+            ),
+          ],
         ),
       ),
     );

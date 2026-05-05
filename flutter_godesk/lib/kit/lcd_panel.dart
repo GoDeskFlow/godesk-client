@@ -17,7 +17,7 @@ import '../theme/godesk_theme.dart';
 import '../theme/typography.dart';
 import '_internal/inset_painter.dart';
 
-class LCDPanel extends StatelessWidget {
+class LCDPanel extends StatefulWidget {
   const LCDPanel({
     required this.child,
     this.padding = const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -30,52 +30,127 @@ class LCDPanel extends StatelessWidget {
   final double borderRadius;
 
   @override
+  State<LCDPanel> createState() => _LCDPanelState();
+}
+
+class _LCDPanelState extends State<LCDPanel> {
+  /// Local mouse position used by the parallax shine. Null when the
+  /// cursor isn't over the panel — overlay fades out via AnimatedOpacity.
+  Offset? _hoverLocal;
+  Size _size = Size.zero;
+
+  @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).extension<GoDeskTheme>()!;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: t.lcdBg,
-        borderRadius: BorderRadius.circular(borderRadius),
-        border: Border.all(color: t.border),
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(borderRadius - 0.5),
-        child: Stack(
-          children: <Widget>[
-            // Inset recess (top dark inner shadow + bottom highlight).
-            Positioned.fill(
-              child: IgnorePointer(
-                child: CustomPaint(
-                  painter: InsetShadowPainter(theme: t, borderRadius: borderRadius),
-                ),
-              ),
-            ),
-            // Scanlines overlay — repeating 2px transparent / 1px dark.
-            Positioned.fill(
-              child: IgnorePointer(
-                child: DecoratedBox(
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      tileMode: TileMode.repeated,
-                      colors: <Color>[
-                        Colors.transparent,
-                        Colors.transparent,
-                        Color(0x2E000000), // rgba(0,0,0,0.18)
-                      ],
-                      stops: <double>[0.0, 0.6667, 1.0], // 2px / 1px @ 3px tile
+    return MouseRegion(
+      onHover: (e) => setState(() => _hoverLocal = e.localPosition),
+      onExit: (_) => setState(() => _hoverLocal = null),
+      child: LayoutBuilder(builder: (context, c) {
+        _size = Size(c.maxWidth, c.maxHeight);
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            color: t.lcdBg,
+            borderRadius: BorderRadius.circular(widget.borderRadius),
+            border: Border.all(color: t.border),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(widget.borderRadius - 0.5),
+            child: Stack(
+              children: <Widget>[
+                // Inset recess (top dark inner shadow + bottom highlight).
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: CustomPaint(
+                      painter: InsetShadowPainter(
+                          theme: t, borderRadius: widget.borderRadius),
                     ),
                   ),
                 ),
-              ),
+                // Parallax shine — a soft radial highlight that follows
+                // the cursor. Subtle: 6% accent at the cursor, fades to
+                // transparent within ~80px. Disappears smoothly on exit.
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: AnimatedOpacity(
+                      opacity: _hoverLocal == null ? 0.0 : 1.0,
+                      duration: const Duration(milliseconds: 220),
+                      child: CustomPaint(
+                        painter: _ShinePainter(
+                          local: _hoverLocal ?? Offset.zero,
+                          size: _size,
+                          ink: t.lcdInk,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                // Scanlines overlay — repeating 2px transparent / 1px dark.
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          tileMode: TileMode.repeated,
+                          colors: <Color>[
+                            Colors.transparent,
+                            Colors.transparent,
+                            Color(0x2E000000), // rgba(0,0,0,0.18)
+                          ],
+                          stops: <double>[0.0, 0.6667, 1.0],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                Padding(padding: widget.padding, child: widget.child),
+              ],
             ),
-            Padding(padding: padding, child: child),
-          ],
-        ),
-      ),
+          ),
+        );
+      }),
     );
   }
+}
+
+class _ShinePainter extends CustomPainter {
+  _ShinePainter({
+    required this.local,
+    required this.size,
+    required this.ink,
+  });
+  final Offset local;
+  final Size size;
+  final Color ink;
+
+  @override
+  void paint(Canvas canvas, Size canvasSize) {
+    if (size.isEmpty) return;
+    final radius = (size.width.clamp(0.0, 200.0)) * 0.5;
+    final rect = Offset.zero & canvasSize;
+    final shader = RadialGradient(
+      colors: <Color>[
+        ink.withValues(alpha: 0.06),
+        Colors.transparent,
+      ],
+      radius: 0.45,
+      center: Alignment(
+        ((local.dx / (canvasSize.width == 0 ? 1 : canvasSize.width)) * 2 - 1)
+            .clamp(-1.0, 1.0),
+        ((local.dy / (canvasSize.height == 0 ? 1 : canvasSize.height)) * 2 - 1)
+            .clamp(-1.0, 1.0),
+      ),
+    ).createShader(rect);
+    final p = Paint()..shader = shader;
+    canvas.drawRect(rect, p);
+    // suppress unused-warning for `radius`; kept for future tuning.
+    if (radius < 0) canvas.drawRect(rect, p);
+  }
+
+  @override
+  bool shouldRepaint(_ShinePainter old) =>
+      old.local != local || old.size != size;
 }
 
 /// Convenience: text style for LCD readouts. Caller pairs the returned style

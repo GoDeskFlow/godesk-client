@@ -268,6 +268,54 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  /// Keyword index for the universal Settings search. Sections are
+  /// matched against any of these substrings (case-insensitive). When
+  /// the user types in the sidebar's search field, we jump to the first
+  /// section that has a hit.
+  static const Map<SettingsSection, List<String>> _settingsKeywords =
+      <SettingsSection, List<String>>{
+    SettingsSection.general: <String>[
+      'launch', 'login', 'autostart', 'start', 'minimized', 'tray',
+      'update', 'check', 'theme', 'dark', 'accent', 'lcd', 'palette',
+      'intensity',
+    ],
+    SettingsSection.video: <String>[
+      'video', 'audio', 'quality', 'volume', 'mic', 'microphone',
+      'speaker', 'gain', 'bitrate', 'codec', 'fps', 'frame',
+      'input device', 'output device',
+    ],
+    SettingsSection.security: <String>[
+      'security', 'permission', 'remote control', 'keyboard', 'mouse',
+      'file transfer', 'clipboard', 'audio capture', 'otp', 'numeric',
+      'password', 'unlock',
+    ],
+    SettingsSection.network: <String>[
+      'network', 'relay', 'rendezvous', 'proxy', 'socks', 'http header',
+      'header', 'failover', 'server', 'port',
+    ],
+    SettingsSection.defaults: <String>[
+      'defaults', 'preset', 'cursor', 'mute', 'privacy', 'blank',
+      'lock', 'view only', 'wallpaper', 'clipboard', 'adaptive',
+      'save last', 'fs root', 'open root', 'display fit', 'fit',
+      'stretch', 'original', 'bitrate',
+    ],
+    SettingsSection.about: <String>[
+      'about', 'version', 'license', 'rendezvous', 'relay', 'source',
+      'logs', 'log', 'platform', 'latency', 'bandwidth', 'status',
+    ],
+  };
+
+  /// Live search query in the sidebar. Empty = nav works as usual.
+  final TextEditingController _navSearch = TextEditingController();
+  String _navQuery = '';
+
+  bool _sectionMatches(SettingsSection s, String q) {
+    if (q.isEmpty) return false;
+    final lower = q.toLowerCase();
+    final keywords = _settingsKeywords[s] ?? const <String>[];
+    return keywords.any((k) => k.contains(lower));
+  }
+
   Widget _sidebar(GoDeskTheme t) {
     final items = <(SettingsSection, String)>[
       (SettingsSection.general, 'General'),
@@ -281,11 +329,64 @@ class _SettingsScreenState extends State<SettingsScreen> {
       padding: const EdgeInsets.all(8),
       child: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
+          // Compact search field — `Ctrl+F` at the top of Settings will
+          // also focus this when implemented in a later round. For now
+          // it's a simple typed filter.
+          LCDPanel(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            child: SizedBox(
+              height: 22,
+              child: Row(
+                children: <Widget>[
+                  Icon(Icons.search, size: 11, color: t.lcdDim),
+                  const SizedBox(width: 5),
+                  Expanded(
+                    child: TextField(
+                      controller: _navSearch,
+                      cursorColor: t.lcdInk,
+                      onChanged: (v) {
+                        setState(() => _navQuery = v.trim());
+                        if (_navQuery.isNotEmpty) {
+                          for (final i in items) {
+                            if (_sectionMatches(i.$1, _navQuery)) {
+                              if (_section != i.$1) {
+                                setState(() => _section = i.$1);
+                              }
+                              break;
+                            }
+                          }
+                        }
+                      },
+                      decoration: InputDecoration(
+                        border: InputBorder.none,
+                        isCollapsed: true,
+                        hintText: 'Find a setting…',
+                        hintStyle: lcdReadout(theme: t, size: 10)
+                            .copyWith(color: t.lcdDim),
+                      ),
+                      style: lcdReadout(theme: t, size: 10),
+                    ),
+                  ),
+                  if (_navQuery.isNotEmpty)
+                    GestureDetector(
+                      onTap: () {
+                        _navSearch.clear();
+                        setState(() => _navQuery = '');
+                      },
+                      child: Icon(Icons.close, size: 11, color: t.lcdDim),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
           for (final i in items)
             _SidebarButton(
               label: i.$2,
               active: i.$1 == _section,
+              hit: _sectionMatches(i.$1, _navQuery),
               onTap: () => setState(() => _section = i.$1),
             ),
         ],
@@ -1245,10 +1346,16 @@ class _SidebarButton extends StatelessWidget {
     required this.label,
     required this.active,
     required this.onTap,
+    this.hit = false,
   });
   final String label;
   final bool active;
   final VoidCallback onTap;
+  /// Whether the section matched the current Settings search query.
+  /// Active section already paints accent-dark; non-active hits get a
+  /// subtle accent-tinted border so the user can see which sections
+  /// have content matching the query.
+  final bool hit;
 
   @override
   Widget build(BuildContext context) {
@@ -1275,16 +1382,39 @@ class _SidebarButton extends StatelessWidget {
                 : null,
             borderRadius: BorderRadius.circular(5),
             border: Border.all(
-              color: active ? t.accentDark : Colors.transparent,
+              color: active
+                  ? t.accentDark
+                  : hit
+                      ? t.accent.withValues(alpha: 0.5)
+                      : Colors.transparent,
             ),
           ),
-          child: Text(
-            label.toUpperCase(),
-            style: GDtype.wordmark(
-              size: 11,
-              color: active ? t.accentDark : t.body,
-              trackingEm: 0.06,
-            ),
+          child: Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  label.toUpperCase(),
+                  style: GDtype.wordmark(
+                    size: 11,
+                    color: active
+                        ? t.accentDark
+                        : hit
+                            ? t.accent
+                            : t.body,
+                    trackingEm: 0.06,
+                  ),
+                ),
+              ),
+              if (hit && !active)
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: t.accent,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+            ],
           ),
         ),
       ),
